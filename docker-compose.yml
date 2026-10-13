@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: dailypapers-pg
+    environment:
+      POSTGRES_USER: dailypapers
+      POSTGRES_PASSWORD: dailypapers
+      POSTGRES_DB: dailypapers
+    ports:
+      # 5433 on the host to avoid colliding with a locally installed Postgres.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dailypapers -d dailypapers"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

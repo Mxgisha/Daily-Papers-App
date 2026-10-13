@@ -1,0 +1,4 @@
+# Core ingestion dependencies.
+# The spike (spike/) itself is standard-library only and needs none of these.
+
+psycopg[binary]>=3.2

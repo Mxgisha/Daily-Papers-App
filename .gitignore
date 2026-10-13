@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local data / caches (regenerable, potentially large)
+data/
+reports/*.json
+
+# Env
+.env
+.env.local
+
+# Node (added when the Expo client lands)
+node_modules/
+.expo/
+dist/
