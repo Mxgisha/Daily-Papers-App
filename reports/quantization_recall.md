@@ -1,6 +1,6 @@
 # Quantization recall — how much ranking quality does compression cost?
 
-Generated: 2026-10-13T19:17:01+00:00
+Generated: 2026-10-13T19:47:08+00:00
 
 Source: Postgres, real SPECTER2 vectors (1633 papers) · dim=768 · queries=150
 

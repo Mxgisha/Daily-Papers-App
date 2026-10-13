@@ -177,6 +177,11 @@ def main() -> int:
     ap.add_argument("--n", type=int, default=5000, help="synthetic corpus size")
     ap.add_argument("--queries", type=int, default=100)
     ap.add_argument(
+        "--no-center",
+        action="store_true",
+        help="skip mean-centering; only useful to reproduce pre-centering numbers",
+    )
+    ap.add_argument(
         "--project",
         type=int,
         default=130_458,
@@ -195,6 +200,14 @@ def main() -> int:
         matrix = l2_normalize(synth_corpus(embedder, args.n))
         source_desc = f"synthetic ({args.n} docs, embedder={embedder.name})"
         trustworthy = False
+
+    # Center by default, because that is what the bundle actually ships. SPECTER2 is
+    # severely anisotropic (measured mean-vector norm 0.92), and centering changes the
+    # vector distribution enough that recall numbers measured without it do not describe
+    # the shipped encoding.
+    if not args.no_center:
+        matrix = l2_normalize(matrix - matrix.mean(axis=0))
+        source_desc += ", mean-centered"
 
     result = evaluate(matrix, args.queries)
     n = result["n_corpus"]

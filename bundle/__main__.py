@@ -95,9 +95,12 @@ def cmd_verify(args) -> int:
         )
 
     print("\n=== vector file ===")
-    header, ids, scales, codes = read_vectors(out / "vectors.bin")
+    vf = read_vectors(out / "vectors.bin")
+    header, ids, scales, codes = vf.header, vf.ids, vf.scales, vf.codes
     print(f"  encoding={header['encoding']} count={header['count']} dim={header['dim']} "
           f"code_dtype={header['code_dtype']}")
+    print(f"  centered={header.get('centered')} "
+          f"centroid_norm={float(np.linalg.norm(vf.centroid)):.4f}")
     print(f"  ids unique : {len(set(ids.tolist())) == len(ids)}")
     print(f"  codes range: [{codes.min()}, {codes.max()}]")
 

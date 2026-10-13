@@ -424,16 +424,23 @@ position.
 
 ## 11. Immediate next steps
 
-1. ~~**Day 1 spike:** measure HTML full-text coverage.~~ ✅ **Done — 95.8% recent, 82% back to 2017** (`spike/`).
-2. ~~**Stand up Postgres + pgvector** and the schema from §4.~~ ✅ **Done — 12 tables, HNSW index live** (`db/schema.sql`).
-3. ~~**Build the ingestion job** end to end.~~ ✅ **Done — arXiv → OpenAlex → Postgres, idempotent** (`ingest/`).
-4. ~~**Add SPECTER2 embeddings.**~~ ✅ **Done — 1,633 papers embedded; proximity adapter verified active** (`dailypapers/embed.py`).
-5. ~~**Decide the vector encoding for the bundle.**~~ ✅ **Done — int8, not binary: 95.3% vs 63.7% recall@20** (`eval/quantization_recall.py`).
-6. ~~**Build the static bundle builder.**~~ ✅ **Done — SQLite + FTS5 + int8 vectors + manifest + delta, verified** (`bundle/`).
-7. **Re-measure quantization at production scale** (≥20k papers) before committing int8 for the
-   whole window. Binary recall fell from 70.5% (n=336) to 63.7% (n=1,633), so confirm int8 stays
-   flat rather than assuming it.
-8. **Scaffold the Expo app** with Expo Router; get feed → detail → reader working against a real
-   bundle. The reader is HTML-primary with a simple PDF fallback.
-9. **Wire up event logging before any ML.** The data you fail to collect in month 1 is gone forever.
-10. **Then** build the Stage 0 recommender.
+1. ~~**Validate HTML coverage.**~~ ✅ **Done — 96.4% recent, 82% back to 2017** (`spike/`).
+2. ~~**Stand up Postgres + pgvector** and the schema.~~ ✅ **Done — 12 tables, HNSW index live.**
+3. ~~**Build the ingestion job** end to end.~~ ✅ **Done — arXiv → OpenAlex → Postgres, idempotent.**
+4. ~~**Add SPECTER2 embeddings.**~~ ✅ **Done — 1,633 papers; proximity adapter verified active.**
+5. ~~**Decide the vector encoding.**~~ ✅ **Done — int8 at 99.8% recall@20, vs binary at 78.5%**, after
+   the mean-centering fix below.
+6. ~~**Build the static bundle builder.**~~ ✅ **Done — SQLite + FTS5 + centered int8 + manifest + delta.**
+7. ~~**Reader feasibility spike.**~~ ✅ **Done — reflow works at a true 390×844; zero page overflow; long
+   papers are ~91 screens and figures are 28 MB against 388 KB of text** (`reader/`).
+8. ~~**Feed generator prototype.**~~ ✅ **Done — centering fixed anisotropy: pairwise similarity
+   0.856 → 0.154, categories 5 → 8** (`recsys/`).
+9. **Downscale figure images.** 28 MB of figures per paper makes lazy loading *and* server-side
+   resizing a requirement, not an optimisation. This is now the largest known cost in the reader.
+10. **Re-measure quantization at ≥20k papers.** int8 is 99.8% at n=1,633, but binary degraded with
+    corpus size (70.5% → 63.7% uncentered), so confirm int8 stays flat rather than assuming it.
+11. **Scaffold the Expo app**: bundle download → unpack → feed → reader, porting the logic already
+    proven in `recsys/` and `reader/`. The reader is HTML-primary with a PDF fallback for the ~4%.
+12. **Wire up event logging before any ML.** The data you fail to collect in month 1 is gone forever.
+13. **Then** move beyond content-based: the events collected above are what make collaborative
+    filtering possible at all.
