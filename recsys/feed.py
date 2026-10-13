@@ -200,17 +200,29 @@ class Corpus:
         corpus = cls(papers, codes, scales, np.asarray(ids, dtype=np.int64))
         corpus.centroid = centroid
         corpus._exact = {int(i): centered[n] for n, i in enumerate(ids)}
+        # vec_index is the row offset, so the DB path honours the same contract as the
+        # bundle path instead of leaving it None and silently dropping every candidate.
+        for p in papers:
+            p.vec_index = corpus._vec_row.get(p.id)
         return corpus
 
     # -- vectors -----------------------------------------------------------
 
     def _rows(self, paper_ids: list[int]) -> tuple[list[int], list[int]]:
+        """Map paper ids to their row offset in the vector file.
+
+        `papers.vec_index` *is* the row offset -- the bundle builder writes it as the
+        position within vectors.bin. An earlier version treated it as a paper id and looked
+        it up in the paper_id -> row map, which returned a *different* paper's vector for
+        almost every paper. It failed silently: the feed still looked plausible because the
+        recency and topic components were correct, so the ranking was partly noise.
+        """
         rows, keep = [], []
         for pid in paper_ids:
             p = self.by_id.get(pid)
-            if p and p.vec_index is not None:
-                row = self._vec_row.get(int(p.vec_index))
-                if row is not None:
+            if p is not None and p.vec_index is not None:
+                row = int(p.vec_index)
+                if 0 <= row < len(self.vec_ids):
                     rows.append(row)
                     keep.append(pid)
         return rows, keep
@@ -246,13 +258,16 @@ class Corpus:
         return int8_scores(self.codes, self.scales, query)
 
     def score_by_paper(self, query: np.ndarray) -> dict[int, float]:
+        """Centered similarity for every paper, keyed by paper id.
+
+        `similarity_scores` is indexed by *row*; the result is re-keyed by paper id via the
+        vector file's id column, which is the authoritative row -> paper mapping.
+        """
         scores = self.similarity_scores(query)
-        out: dict[int, float] = {}
-        for vec_index, score in zip(self.vec_ids.tolist(), scores.tolist()):
-            row = self._vec_row.get(int(vec_index))
-            if row is not None:
-                out[int(vec_index)] = float(score)
-        return out
+        return {
+            int(pid): float(scores[row])
+            for row, pid in enumerate(self.vec_ids.tolist())
+        }
 
 
 def _parse(value: str | None) -> datetime | None:
@@ -325,7 +340,7 @@ def generate_feed(
             continue
         if paper.vec_index is None:
             continue
-        sim = sims.get(int(paper.vec_index))
+        sim = sims.get(paper.id)
         if sim is None:
             continue
         if paper.published_at and paper.published_at.timestamp() < recent_cutoff:

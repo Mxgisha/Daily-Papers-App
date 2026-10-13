@@ -435,12 +435,19 @@ position.
    papers are ~91 screens and figures are 28 MB against 388 KB of text** (`reader/`).
 8. ~~**Feed generator prototype.**~~ ✅ **Done — centering fixed anisotropy: pairwise similarity
    0.856 → 0.154, categories 5 → 8** (`recsys/`).
-9. **Downscale figure images.** 28 MB of figures per paper makes lazy loading *and* server-side
-   resizing a requirement, not an optimisation. This is now the largest known cost in the reader.
-10. **Re-measure quantization at ≥20k papers.** int8 is 99.8% at n=1,633, but binary degraded with
-    corpus size (70.5% → 63.7% uncentered), so confirm int8 stays flat rather than assuming it.
-11. **Scaffold the Expo app**: bundle download → unpack → feed → reader, porting the logic already
-    proven in `recsys/` and `reader/`. The reader is HTML-primary with a PDF fallback for the ~4%.
-12. **Wire up event logging before any ML.** The data you fail to collect in month 1 is gone forever.
-13. **Then** move beyond content-based: the events collected above are what make collaborative
+9. ~~**Scaffold the Expo client.**~~ ✅ **Done — core logic cross-verified against the Python
+   reference; feed reproduces the ranking exactly on the real bundle** (`mobile/`).
+10. **Downscale figure images.** 28 MB of figures per paper makes lazy loading *and* server-side
+    resizing a requirement, not an optimisation. This is now the largest known cost in the reader.
+11. **Verify the client on a device.** Everything in `mobile/src/platform/` (download, fzstd on
+    Hermes, file writes, SQLite, WebView) is unproven — it cannot run in Node. This is the single
+    biggest remaining unknown.
+12. **Bundle the LaTeX math fallback.** Every arXiv math element embeds its original LaTeX, so
+    KaTeX with bundled fonts removes the dependency on the device shipping a math font, and
+    shrinks the math payload ~12x.
+13. **Re-measure quantization at ≥20k papers.** int8 is 99.8% at n=1,633, but binary degraded with
+    corpus size, so confirm int8 stays flat rather than assuming it.
+14. **Add persistence**: reading progress, favorites, collections, and the local event queue with
+    idempotent upload. The `client_event_id` design exists server-side; the client is unwritten.
+15. **Then** move beyond content-based: the events collected above are what make collaborative
     filtering possible at all.

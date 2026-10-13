@@ -37,6 +37,7 @@ def cmd_build(args) -> int:
         out_dir=Path(args.out),
         window_days=args.window_days,
         encoding=args.encoding,
+        center=not args.no_center,
         compression_level=args.compression_level,
         with_fts=not args.no_fts,
         limit=args.limit,
@@ -166,6 +167,11 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--limit", type=int, default=None, help="cap papers (smoke runs)")
     b.add_argument("--delta-days", type=int, default=1)
     b.add_argument("--no-fts", action="store_true", help="omit the SQLite FTS5 search index")
+    b.add_argument(
+        "--no-center",
+        action="store_true",
+        help="skip mean-centering; only for A/B comparison against centered vectors",
+    )
 
     i = sub.add_parser("inspect", help="print the manifest")
     i.add_argument("out", nargs="?", default="dist")

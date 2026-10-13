@@ -42,7 +42,8 @@ Phases 0 and 1 are done and verified, plus reader and feed feasibility spikes.
 | OpenAlex enrichment, same-day preprints | **99.7%**, zero lag |
 | Best vector encoding | **int8: 99.8% recall@20** after centering (binary: 78.5%) |
 | Reflowed reading at 390×844 | **viable** — zero page overflow, 91 screens for a 15k-word paper |
-| Feed diversity after centering | pairwise similarity **0.856 → 0.154** |
+| Feed diversity after centering | pairwise similarity **0.897 → 0.205**, categories 5 → 7 |
+| TypeScript feed vs Python reference | **identical ranking** on the real bundle |
 
 ## The two findings that reshaped the design
 
@@ -64,13 +65,14 @@ nothing to work with — the first feed generated was **85.6% mean pairwise simi
 centroid is stored in `vectors.bin` and the manifest so lazily fetched older shards stay
 comparable.
 
-Effect on feed quality, same seeds and config:
+Effect on feed quality, same seeds and config (re-measured after the `vec_index` fix
+described below, so these are from corrected code):
 
 | metric | before | after |
 |---|---|---|
-| mean pairwise similarity | 0.856 | **0.154** |
-| distinct categories | 5 | **8** |
-| topic entropy (normalized) | 0.738 | **0.955** |
+| mean pairwise similarity | 0.897 | **0.205** |
+| distinct categories | 5 | **7** |
+| topic entropy (normalized) | 0.781 | **0.840** |
 
 ### 2. Figures, not text, are the real payload
 
@@ -150,6 +152,32 @@ which means it also exercises the real `vectors.bin` parser and id mapping.
 
 Quality is reported as proxies, because without users there is no ground truth: pairwise
 redundancy, category spread, normalized topic entropy, freshness, and HTML coverage.
+
+## The client
+
+`mobile/` is an Expo (React Native) app — one codebase for iOS, Android, and web. See
+[mobile/README.md](mobile/README.md) for the full picture.
+
+Split so that as much as possible is verifiable without a device:
+
+- **`mobile/src/core/`** — pure TypeScript, no React Native imports. The `vectors.bin` parser
+  and the whole feed pipeline. Ported from `recsys/feed.py` and **cross-verified against it**:
+  `npm test` asserts the TypeScript feed reproduces the Python ranking exactly, on the real
+  `dist/` bundle, including score components and quality metrics.
+- **`mobile/src/platform/`** — thin device adapters (download, `fzstd`, SQLite, files).
+  Deliberately outside the test suite, because none of it can run in Node.
+- **`mobile/app/`** — Expo Router screens: the daily feed and a WebView reader.
+
+**Porting found a real bug.** `papers.vec_index` *is* a row offset into `vectors.bin`, but the
+Python `_rows()` treated it as a paper id and looked it up in the paper-id→row map — returning
+a *different paper's vector* for almost every row. It failed silently, because recency and
+topic scores stayed correct, so the similarity term was effectively noise while the feed still
+looked plausible. Both implementations are fixed and a regression test guards the invariant.
+This is the argument for cross-implementation verification in one line.
+
+Decompression was settled with measurements rather than preference: `fzstd` (zstd) and `pako`
+(gzip) both decompress the real bundle at ~60 MB/s in pure JS, but zstd is a 13% smaller
+download. `fzstd` needs no WASM, which matters because Hermes does not support it.
 
 ## Quick start
 
@@ -253,6 +281,7 @@ recsys/                 On-device feed: candidates, scoring, MMR, exploration, e
 reader/                 Reader spike: extractor, reflowed CSS, WebDriver measurement
 eval/                   Offline evaluation (quantization recall)
 spike/                  Phase 0 coverage analysis (stdlib only)
+mobile/                 Expo client (core logic cross-verified against recsys/)
 db/schema.sql           Base schema
 db/migrations/          Numbered, tracked in schema_migrations
 docker-compose.yml      Postgres 17 + pgvector on host port 5433

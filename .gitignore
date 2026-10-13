@@ -8,8 +8,12 @@ venv/
 data/
 reports/*.json
 dist/
+dist-*/          # A/B bundles, e.g. dist-nocenter used for the centering comparison
 .pip-cache/
 .hf-cache/
+.npm-cache/
+.bench/
+.home/
 
 # Env
 .env
@@ -19,3 +23,6 @@ dist/
 node_modules/
 .expo/
 dist/
+mobile/tests/fixtures/
+mobile/.expo/
+expo-env.d.ts

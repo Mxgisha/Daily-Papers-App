@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Daily Papers",
+    "slug": "daily-papers",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "dailypapers",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.dailypapers"
+    },
+    "android": {
+      "package": "app.dailypapers",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-status-bar"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

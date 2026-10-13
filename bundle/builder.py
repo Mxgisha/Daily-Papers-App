@@ -97,6 +97,7 @@ class BundleConfig:
     out_dir: Path
     window_days: int = 365
     encoding: str = "int8"          # "int8" (768 B) or "binary" (96 B)
+    center: bool = True             # mean-center before quantizing; see write_vectors
     compression_level: int = 12
     with_fts: bool = True
     limit: int | None = None
@@ -359,18 +360,33 @@ def write_delta(conn: psycopg.Connection, path: Path, since_days: int, level: in
         )
         rows = cur.fetchall()
 
-    cctx = zstd.ZstdCompressor(level=level)
-    with path.open("wb") as raw, cctx.stream_writer(raw) as z:
-        for r in rows:
-            record = {**r, "published_at": r["published_at"].isoformat() if r["published_at"] else None}
-            z.write((json.dumps(record, separators=(",", ":")) + "\n").encode())
+    # One-shot, not streamed: see compress(). Deltas are small, so this is cheap and it
+    # keeps every artifact in the bundle parseable by the same client decompressor.
+    lines = []
+    for r in rows:
+        record = {
+            **r,
+            "published_at": r["published_at"].isoformat() if r["published_at"] else None,
+        }
+        lines.append(json.dumps(record, separators=(",", ":")))
+    payload = ("\n".join(lines) + "\n").encode() if lines else b""
+    path.write_bytes(
+        zstd.ZstdCompressor(level=level, write_content_size=True).compress(payload)
+    )
     return len(rows)
 
 
 def compress(src: Path, dst: Path, level: int) -> None:
-    cctx = zstd.ZstdCompressor(level=level)
-    with src.open("rb") as fin, dst.open("wb") as fout:
-        cctx.copy_stream(fin, fout)
+    """Compress a whole file in one shot.
+
+    One-shot matters here. `copy_stream` produces a frame with no content-size field, so a
+    client decompressor cannot preallocate its output buffer -- and a decompressor that
+    requires the size upfront rejects the frame outright. Measured: fzstd (pure JS, the
+    Hermes-compatible decompressor) runs at ~60 MB/s on these frames either way, but
+    without a declared size it must grow the buffer dynamically.
+    """
+    cctx = zstd.ZstdCompressor(level=level, write_content_size=True)
+    dst.write_bytes(cctx.compress(src.read_bytes()))
 
 
 @dataclass
@@ -429,7 +445,11 @@ def build(conn: psycopg.Connection, config: BundleConfig) -> dict:
     raw_db.unlink()
 
     vec_path = out / "vectors.bin"
-    centroid = matrix.mean(axis=0) if len(matrix) else np.zeros(DIM, dtype=np.float32)
+    # A zero centroid makes centering a no-op, which is how --no-center is implemented.
+    if len(matrix) and config.center:
+        centroid = matrix.mean(axis=0)
+    else:
+        centroid = np.zeros(DIM, dtype=np.float32)
     encoding_info = write_vectors(vec_path, vec_ids, matrix, config.encoding, centroid)
 
     delta_path = out / "delta" / f"{datetime.now(timezone.utc):%Y-%m-%d}.jsonl.zst"
