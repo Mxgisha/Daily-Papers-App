@@ -192,4 +192,88 @@ def stats(conn: psycopg.Connection) -> dict:
         out["papers_with_html"] = cur.fetchone()["n"]
         cur.execute("SELECT count(*) AS n FROM papers WHERE enriched_at IS NOT NULL")
         out["papers_enriched"] = cur.fetchone()["n"]
+        cur.execute("SELECT count(*) AS n FROM papers WHERE embedding IS NOT NULL")
+        out["papers_embedded"] = cur.fetchone()["n"]
     return out
+
+
+# --------------------------------------------------------------------------
+# Migrations
+# --------------------------------------------------------------------------
+
+MIGRATIONS_DIR = ROOT / "db" / "migrations"
+
+
+def apply_migrations(conn: psycopg.Connection, path: Path = MIGRATIONS_DIR) -> list[str]:
+    """Apply numbered .sql migrations in filename order, at most once each."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version    TEXT PRIMARY KEY,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    conn.commit()
+
+    files = sorted(path.glob("*.sql")) if path.exists() else []
+    with conn.cursor() as cur:
+        cur.execute("SELECT version FROM schema_migrations")
+        done = {row["version"] for row in cur.fetchall()}
+
+    applied: list[str] = []
+    for f in files:
+        if f.name in done:
+            continue
+        with conn.cursor() as cur:
+            cur.execute(f.read_text())
+            cur.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (f.name,))
+        conn.commit()
+        applied.append(f.name)
+    return applied
+
+
+# --------------------------------------------------------------------------
+# Embeddings
+# --------------------------------------------------------------------------
+
+def fetch_papers_to_embed(
+    conn: psycopg.Connection, *, limit: int | None = None, only_missing: bool = True
+) -> list[dict]:
+    """The embedding work queue, newest papers first."""
+    where = "WHERE embedding IS NULL" if only_missing else ""
+    sql = f"""
+        SELECT id, title, abstract
+          FROM papers
+          {where}
+         ORDER BY published_at DESC NULLS LAST
+    """
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        return cur.fetchall()
+
+
+def _vector_literal(vec) -> str:
+    """pgvector accepts a '[a,b,c]' text literal, which avoids an extra dependency."""
+    return "[" + ",".join(f"{float(x):.7g}" for x in vec) + "]"
+
+
+def save_embeddings(conn: psycopg.Connection, papers: list[dict], vectors, model: str) -> int:
+    """Persist vectors. Callers must pass L2-normalized vectors."""
+    rows = [(_vector_literal(v), model, p["id"]) for p, v in zip(papers, vectors)]
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            UPDATE papers
+               SET embedding       = %s::vector,
+                   embedding_model = %s,
+                   embedded_at     = now()
+             WHERE id = %s
+            """,
+            rows,
+        )
+    conn.commit()
+    return len(rows)

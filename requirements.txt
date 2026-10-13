@@ -1,4 +1,9 @@
-# Core ingestion dependencies.
-# The spike (spike/) itself is standard-library only and needs none of these.
+# Core runtime dependencies for ingestion, quantization and bundle building.
+#
+# The spike (spike/) and the quantization math are standard-library + numpy only.
+# Note what is NOT here: the shipped app needs no ML runtime at all, because embeddings
+# are precomputed at build time and shipped as quantized vectors.
 
 psycopg[binary]>=3.2
+numpy>=1.26
+zstandard>=0.22

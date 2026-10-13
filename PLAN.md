@@ -5,6 +5,35 @@ favorites/collections, and a recommendation system that improves as it learns th
 
 ---
 
+## 0. Architecture revision (Phase 1) — static bundle, no server
+
+The stack in §2 below assumed a self-hosted FastAPI + Postgres + Redis backend with a
+server-side recommender. **That was heavier than the MVP needs, and it has been revised.**
+
+The insight is that three concerns are separable, and only one needs a server:
+
+| Concern | Where it lives | Needs a server? |
+|---|---|---|
+| Paper corpus + tags | Static bundle files on a CDN | **No** — just files |
+| Personalization + reading state | On-device SQLite | **No** |
+| Identity + telemetry | Small managed Postgres | **Tiny one** |
+
+Read-only content is precomputed by a nightly job and shipped as static files (`app_bundle.db.zst`,
+`vectors.bin`, `delta/*.jsonl.zst`, `manifest.json`). Embeddings are precomputed at build time
+and shipped as quantized vectors, so the app needs **no ML runtime at all** — the entire
+content-based recommender is arithmetic over a packed binary file. The only central
+component is a managed Postgres (Supabase free tier) for auth and event ingest.
+
+**Consequences:** no FastAPI, no Redis, no server to operate, and $0/month infra at MVP
+scale. What is given up: no live server-side re-ranking (mitigated by putting ranking weights
+in `manifest.json`), improvements land only with a new bundle, and no collaborative filtering
+(which is unavailable anyway without users).
+
+See [README.md](README.md) for the measured artifacts, the quantization finding that drove the
+int8 decision, and the bundle size plan.
+
+---
+
 ## 1. The decision that shapes everything: HTML before PDF
 
 Before stacking frameworks, settle this. A research paper is not one artifact:
@@ -398,10 +427,13 @@ position.
 1. ~~**Day 1 spike:** measure HTML full-text coverage.~~ ✅ **Done — 95.8% recent, 82% back to 2017** (`spike/`).
 2. ~~**Stand up Postgres + pgvector** and the schema from §4.~~ ✅ **Done — 12 tables, HNSW index live** (`db/schema.sql`).
 3. ~~**Build the ingestion job** end to end.~~ ✅ **Done — arXiv → OpenAlex → Postgres, idempotent** (`ingest/`).
-4. **Add SPECTER2 embeddings.** `papers.embedding` is nullable and waiting. Batch-embed title +
-   abstract on CPU, restricted to papers entering a candidate pool (§9, risk 4) — never the
-   whole corpus.
-5. **Scaffold the Expo app** with Expo Router; get feed → detail → reader working against real data.
-   The reader is now scoped to HTML-primary with a simple PDF fallback.
-6. **Wire up event logging before any ML.** The data you fail to collect in month 1 is gone forever.
-7. **Then** build the Stage 0 recommender.
+4. ~~**Add SPECTER2 embeddings.**~~ ✅ **Done — 1,633 papers embedded; proximity adapter verified active** (`dailypapers/embed.py`).
+5. ~~**Decide the vector encoding for the bundle.**~~ ✅ **Done — int8, not binary: 95.3% vs 63.7% recall@20** (`eval/quantization_recall.py`).
+6. ~~**Build the static bundle builder.**~~ ✅ **Done — SQLite + FTS5 + int8 vectors + manifest + delta, verified** (`bundle/`).
+7. **Re-measure quantization at production scale** (≥20k papers) before committing int8 for the
+   whole window. Binary recall fell from 70.5% (n=336) to 63.7% (n=1,633), so confirm int8 stays
+   flat rather than assuming it.
+8. **Scaffold the Expo app** with Expo Router; get feed → detail → reader working against a real
+   bundle. The reader is HTML-primary with a simple PDF fallback.
+9. **Wire up event logging before any ML.** The data you fail to collect in month 1 is gone forever.
+10. **Then** build the Stage 0 recommender.

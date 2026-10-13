@@ -18,8 +18,10 @@ from dataclasses import dataclass, field
 import psycopg
 
 from dailypapers import arxiv, coverage, openalex
-from dailypapers.db import save_paper
+from dailypapers.db import fetch_papers_to_embed, save_embeddings, save_paper
+from dailypapers.embed import paper_text
 from dailypapers.http import PoliteClient
+from dailypapers.quantize import l2_normalize
 
 COMMIT_EVERY = 25
 
@@ -128,3 +130,43 @@ def crawl(
 
     conn.commit()
     return result
+
+
+def embed_papers(
+    conn: psycopg.Connection,
+    embedder,
+    *,
+    limit: int | None = None,
+    batch_size: int = 16,
+    only_missing: bool = True,
+    verbose: bool = True,
+) -> int:
+    """Compute and store embeddings for papers that lack them.
+
+    Vectors are L2-normalized before storage, so cosine similarity reduces to a dot
+    product -- which is the property that lets Hamming distance over sign bits stand in
+    for cosine on the device.
+    """
+    rows = fetch_papers_to_embed(conn, limit=limit, only_missing=only_missing)
+    if not rows:
+        if verbose:
+            print("nothing to embed")
+        return 0
+
+    if verbose:
+        print(
+            f"embedding {len(rows)} papers with {embedder.name} (batch={batch_size}) ...",
+            flush=True,
+        )
+    texts = [paper_text(r["title"], r["abstract"]) for r in rows]
+    vectors = l2_normalize(embedder.encode(texts, batch_size=batch_size))
+
+    if vectors.shape[0] != len(rows):
+        raise RuntimeError(
+            f"embedder returned {vectors.shape[0]} vectors for {len(rows)} papers"
+        )
+
+    saved = save_embeddings(conn, rows, vectors, embedder.name)
+    if verbose:
+        print(f"  stored {saved} embeddings ({vectors.shape[1]}-dim)")
+    return saved

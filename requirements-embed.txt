@@ -1,0 +1,15 @@
+# Build-time-only dependencies for computing SPECTER2 embeddings.
+#
+# These are NOT needed to run the app, to build a bundle from already-embedded papers, or
+# to run the quantization evaluation. They exist solely so `ingest embed` can produce the
+# vectors that the bundle then ships in compressed form.
+#
+# Install CPU-only torch to avoid pulling ~2.5 GB of CUDA wheels on a machine with no GPU:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements-embed.txt
+
+-r requirements.txt
+
+torch>=2.4
+transformers>=4.40
+adapters>=1.0

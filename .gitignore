@@ -7,6 +7,9 @@ venv/
 # Local data / caches (regenerable, potentially large)
 data/
 reports/*.json
+dist/
+.pip-cache/
+.hf-cache/
 
 # Env
 .env
