@@ -2,14 +2,26 @@
  * The script injected into the reader WebView.
  *
  * Extracted from the screen so it can be exercised directly against real arXiv HTML in a
- * browser. This is the most fragile part of the app — it has to run before the document
- * exists, survive lazy figures changing the page height underneath it, and compute a
- * position that still means something after a reload. Inline in a component it could only be
- * reasoned about; as a module it can be tested.
+ * browser (mobile/harness/check_restore.py). This is the most fragile part of the app: it
+ * runs before the document exists, has to survive lazy figures changing the page height
+ * underneath it, and has to produce a position that still means something after a reload.
  *
  * The page talks back over `window.ReactNativeWebView.postMessage` with:
- *   { type: 'position', fraction, anchor }   on scroll, throttled
- *   { type: 'restored', ok }                 in reply to __dpRestore()
+ *   { type: 'ready' }                                 once the document has loaded
+ *   { type: 'position', fraction, anchor }            on scroll, throttled
+ *   { type: 'restored', ok, fraction, anchor }        in reply to __dpRestore()
+ *
+ * Restore is deliberately belt-and-braces:
+ *
+ *  1. The script restores on its own, but only after `DOMContentLoaded`, and it will not
+ *     stop on a "stable" height until `readyState` is `complete`. An earlier version exited
+ *     as soon as the height stopped changing — which is also true of a page that has not
+ *     started loading yet, so on a slow connection it gave up immediately, having restored
+ *     nothing. That is the bug that made restore look broken.
+ *  2. The app also drives it: on 'ready' it calls __dpRestore(), reads back where the page
+ *     landed, and retries if that is not where it asked for. Closure over the real result
+ *     rather than hoping a timer fired at the right moment.
+ *  3. And the header button calls the same function on demand.
  */
 
 export interface ReadingSpotLike {
@@ -35,15 +47,20 @@ export const BLOCK_SELECTOR = [
   'article .ltx_para',
 ].join(', ');
 
-/** Injected into the loaded page by the header button to scroll back to the stored spot. */
+/** Injected into the loaded page by the restore button and by the app's retry loop. */
 export const RESTORE_JS = 'window.__dpRestore && window.__dpRestore(); true;';
+
+/** Recolour an already-loaded page without reloading it. */
+export function themeJs(theme: 'light' | 'dark'): string {
+  return `if (window.__dpTheme) { window.__dpTheme(${JSON.stringify(theme)}); } true;`;
+}
 
 export interface ScriptOptions {
   css: string;
   theme: 'light' | 'dark';
   spot?: ReadingSpotLike | null;
   blockSelector?: string;
-  /** How many times the automatic restore re-applies while the document settles. */
+  /** Upper bound on self-restore attempts; each is one settle interval. */
   settleTries?: number;
   settleDelayMs?: number;
 }
@@ -69,8 +86,7 @@ export function buildReaderScript({
       var SETTLE_TRIES = ${settleTries};
       var SETTLE_DELAY = ${settleDelayMs};
 
-      function apply() {
-        document.documentElement.setAttribute('data-theme', theme);
+      function applyCss() {
         var s = document.getElementById('__reader_css');
         if (!s) {
           s = document.createElement('style');
@@ -79,14 +95,30 @@ export function buildReaderScript({
         }
         s.textContent = css;
       }
-      apply();
-      document.addEventListener('DOMContentLoaded', apply);
+
+      // Sets the attribute the stylesheet keys off. Exposed so the app can switch theme on a
+      // loaded page -- remounting the WebView to change colour would reload the article and
+      // lose the reader's place.
+      window.__dpTheme = function (t) {
+        document.documentElement.setAttribute('data-theme', t);
+      };
+
+      applyCss();
+      window.__dpTheme(theme);
+      document.addEventListener('DOMContentLoaded', function () {
+        applyCss();
+        window.__dpTheme(theme);
+      });
 
       function post(m) {
         if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(m));
       }
       function span() { return document.documentElement.scrollHeight - window.innerHeight; }
       function blocks() { return document.querySelectorAll(BLOCK_SELECTOR); }
+      function fractionNow() {
+        var sp = span();
+        return sp > 0 ? window.scrollY / sp : 0;
+      }
 
       function currentAnchor() {
         var nodes = blocks();
@@ -115,28 +147,16 @@ export function buildReaderScript({
         window.addEventListener(evt, function () { userMoved = true; }, { passive: true });
       });
 
-      // Called by the header button. Clears the guard first: tapping the button is not the
-      // same as scrolling away, and without this a reader who scrolled once could never use
-      // the button again.
+      // Returns where the page ACTUALLY ended up, so the app can check rather than assume.
       window.__dpRestore = function () {
         userMoved = false;
         var ok = applyRestore();
-        post({ type: 'restored', ok: ok });
-        return ok;
+        var result = { type: 'restored', ok: ok, fraction: fractionNow(), anchor: currentAnchor() };
+        post(result);
+        return result;
       };
 
-      // Best-effort automatic restore.
-      //
-      // This runs BEFORE the document exists (the app injects at document start), and its
-      // first several attempts therefore find an empty page. The original version retried a
-      // fixed 14 times at 350ms — about five seconds — and gave up. arXiv's HTML routinely
-      // takes longer than that to arrive, so the loop was usually over before there was
-      // anything to scroll: the position was saved correctly and simply never applied. Hence
-      // the header button, which asks an already-loaded page to scroll.
-      //
-      // Now it runs until the page stops growing rather than for a fixed count, so it adapts
-      // to a slow load instead of racing it, and still stops early on a fast one.
-      if (startAnchor >= 0 || startFraction > 0) {
+      function beginSettle() {
         var attempts = 0;
         var lastHeight = -1;
         var stableFor = 0;
@@ -146,10 +166,10 @@ export function buildReaderScript({
           applyRestore();
 
           var h = document.documentElement.scrollHeight;
-          if (h === lastHeight && h > 0) {
-            stableFor++;
-            // Height unchanged for a few passes: lazy figures have finished arriving.
-            if (stableFor >= 3) return;
+          // Only treat a steady height as "finished" once the document has actually
+          // finished loading. A blank page is also a steady page.
+          if (document.readyState === 'complete' && h > 0 && h === lastHeight) {
+            if (++stableFor >= 3) return;
           } else {
             stableFor = 0;
             lastHeight = h;
@@ -158,22 +178,32 @@ export function buildReaderScript({
         })();
       }
 
-      // A late load (or a slow image) can move the target after the loop has stopped.
-      window.addEventListener('load', function () {
-        if (!userMoved) applyRestore();
-      });
+      if (startAnchor >= 0 || startFraction > 0) {
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', beginSettle);
+        } else {
+          beginSettle();
+        }
+      }
+
+      // Tell the app the page is ready, so it can drive restore and verify the result
+      // instead of relying on this script's own timing.
+      function announceReady() {
+        if (startAnchor >= 0 || startFraction > 0) applyRestore();
+        post({ type: 'ready' });
+      }
+      if (document.readyState === 'complete') {
+        announceReady();
+      } else {
+        window.addEventListener('load', announceReady);
+      }
 
       var last = 0;
       window.addEventListener('scroll', function () {
         var now = Date.now();
         if (now - last < 600) return;
         last = now;
-        var sp = span();
-        post({
-          type: 'position',
-          fraction: sp > 0 ? window.scrollY / sp : 0,
-          anchor: currentAnchor()
-        });
+        post({ type: 'position', fraction: fractionNow(), anchor: currentAnchor() });
       }, { passive: true });
 
       true;

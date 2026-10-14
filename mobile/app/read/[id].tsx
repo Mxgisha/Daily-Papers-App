@@ -9,13 +9,16 @@
  *         WebView. No native module, so this keeps working in Expo Go.
  *
  * Position is { fraction, anchor }: how far through the document, plus the index of the
- * topmost visible block (or page, for a PDF). The fraction alone drifts because lazy figures
- * keep growing the document after load.
+ * topmost visible block (or page, for a PDF).
  *
- * Restore happens two ways. Automatically, best-effort, on open — the script retries until
- * the page stops growing rather than for a fixed count, because it runs before the document
- * exists. And explicitly, from the button in the header, which asks the already-loaded page
- * to scroll and is the dependable path.
+ * Two things here are deliberately not done by remounting the WebView:
+ *
+ *  - **Theme.** Changing colour injects `__dpTheme` into the loaded page. Remounting to
+ *    recolour reloads the article, which is why toggling the theme used to throw the reader
+ *    back to wherever the paper had originally been opened.
+ *  - **Restore.** The page announces 'ready' and the app then drives the restore and checks
+ *    where it landed, retrying if that is not where it asked for. The page's own timer can
+ *    fire while the document is still blank.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -28,12 +31,16 @@ import { ThemeToggle } from '../../src/components/ThemeToggle';
 import { needsRepair, useLibrary, type ReadingSpot } from '../../src/library';
 import { pdfViewerHtml } from '../../src/pdfViewer';
 import { READER_CSS } from '../../src/platform/readerCss.generated';
-import { RESTORE_JS, buildReaderScript } from '../../src/readerScript';
+import { RESTORE_JS, buildReaderScript, themeJs } from '../../src/readerScript';
 import { useTheme, type Palette } from '../../src/theme';
 import type { PaperItem } from '../../src/types';
 
 const ARXIV_HTML = 'https://arxiv.org/html/';
 const ARXIV_PDF = 'https://arxiv.org/pdf/';
+
+/** How far off the requested position we tolerate before trying again. */
+const RESTORE_TOLERANCE = 0.02;
+const MAX_RESTORE_TRIES = 3;
 
 /** A position at the very top is not somewhere to go back to. */
 function isUsableSpot(s: ReadingSpot | null): boolean {
@@ -64,14 +71,16 @@ export default function ReaderScreen() {
    * The position the WebView was created with.
    *
    * Deliberately NOT updated as the reader scrolls: it is part of the WebView's `key`, so
-   * changing it would remount the page mid-read and throw the reader back to the top every
-   * time a position was reported.
+   * changing it would remount the page mid-read.
    */
   const [initialSpot, setInitialSpot] = useState<ReadingSpot | null>(null);
   /** Whether there is somewhere to return to, for the header button. Updated freely. */
   const [hasSpot, setHasSpot] = useState(false);
-
   const [meta, setMeta] = useState<PaperItem | null>(null);
+
+  /** What we are trying to land on, and how many times we have tried. */
+  const target = useRef<ReadingSpot | null>(null);
+  const tries = useRef(0);
 
   const startedRef = useRef(false);
   useEffect(() => {
@@ -80,12 +89,17 @@ export default function ReaderScreen() {
     const stored = positionFor(id);
     setInitialSpot(stored);
     setHasSpot(isUsableSpot(stored));
+    target.current = isUsableSpot(stored) ? stored : null;
     setMeta(paperMeta(id));
   }, [ready, id, positionFor, paperMeta]);
 
-  // If the paper has never been on screen there is no cached title — a cold open from a
-  // pasted id, a link, or the paper of the day. Ask arXiv once so the header and any saved
-  // entry show a real name rather than "2610.14091".
+  // Recolour the loaded page. Never a remount: that would reload the article.
+  useEffect(() => {
+    webviewRef.current?.injectJavaScript(themeJs(theme));
+  }, [theme]);
+
+  // If the paper has never been on screen there is no cached title. Ask arXiv once so the
+  // header and any saved entry show a real name rather than "2610.14091".
   useEffect(() => {
     if (!ready || meta) return;
     let alive = true;
@@ -110,8 +124,7 @@ export default function ReaderScreen() {
   const saved = isFavorite(id);
   const entry = favorites.find((f) => f.id === id);
 
-  // Repair a saved entry whose metadata was not known when it was saved. Without this the
-  // paper stays in the Saved tab as a bare id, and toggling it would simply delete it.
+  // Repair a saved entry whose metadata was not known when it was saved.
   useEffect(() => {
     if (!meta || !entry || !needsRepair(entry)) return;
     updateFavorite(id, {
@@ -123,26 +136,52 @@ export default function ReaderScreen() {
     });
   }, [meta, entry, id, updateFavorite]);
 
+  const askRestore = useCallback(() => {
+    webviewRef.current?.injectJavaScript(RESTORE_JS);
+  }, []);
+
   const onMessage = useCallback(
     (event: WebViewMessageEvent) => {
+      let msg: { type?: string; fraction?: number; anchor?: number };
       try {
-        const msg = JSON.parse(event.nativeEvent.data) as {
-          type: string;
-          fraction?: number;
-          anchor?: number;
-        };
-        if (msg.type === 'position' && typeof msg.fraction === 'number') {
-          const next = { fraction: msg.fraction, anchor: msg.anchor ?? -1 };
-          rememberPosition(id, next);
-          // Only the button's enabled state changes. `initialSpot` must not, or the WebView
-          // remounts on every scroll report.
-          setHasSpot(isUsableSpot(next));
-        }
+        msg = JSON.parse(event.nativeEvent.data);
       } catch {
-        // A malformed message from the page is not worth interrupting reading for.
+        return; // A malformed message is not worth interrupting reading for.
+      }
+
+      if (msg.type === 'position' && typeof msg.fraction === 'number') {
+        const next = { fraction: msg.fraction, anchor: msg.anchor ?? -1 };
+        rememberPosition(id, next);
+        // Only the button's enabled state changes. `initialSpot` must not, or the WebView
+        // remounts on every scroll report.
+        setHasSpot(isUsableSpot(next));
+        return;
+      }
+
+      if (msg.type === 'ready') {
+        // The document is up. Re-assert the theme (a mid-load change would otherwise have
+        // used whichever value the injected script was built with) and drive the restore.
+        webviewRef.current?.injectJavaScript(themeJs(theme));
+        if (target.current) {
+          tries.current = 0;
+          askRestore();
+        }
+        return;
+      }
+
+      if (msg.type === 'restored') {
+        const want = target.current;
+        if (!want || typeof msg.fraction !== 'number') return;
+        const off = Math.abs(msg.fraction - want.fraction);
+        // Closed loop: the page reports where it actually landed, so we can tell the
+        // difference between "restored" and "asked to restore".
+        if (off > RESTORE_TOLERANCE && tries.current < MAX_RESTORE_TRIES) {
+          tries.current += 1;
+          setTimeout(askRestore, 700);
+        }
       }
     },
-    [id, rememberPosition],
+    [id, rememberPosition, theme, askRestore],
   );
 
   // The script is a module so it can be exercised against real arXiv HTML in a browser;
@@ -183,7 +222,10 @@ export default function ReaderScreen() {
           headerRight: () => (
             <View style={styles.headerRight}>
               <Pressable
-                onPress={() => webviewRef.current?.injectJavaScript(RESTORE_JS)}
+                onPress={() => {
+                  tries.current = 0;
+                  askRestore();
+                }}
                 disabled={!hasSpot}
                 testID="reader-restore"
                 accessibilityRole="button"
@@ -200,8 +242,6 @@ export default function ReaderScreen() {
                 onPress={() =>
                   toggleFavorite({
                     id,
-                    // Real metadata when we have it. The id is only ever a last resort, and
-                    // the Saved tab repairs the entry once the lookup returns.
                     title: meta?.title ?? id,
                     category: meta?.category ?? '',
                     published: meta?.published ?? null,
@@ -229,8 +269,9 @@ export default function ReaderScreen() {
       {renderer === 'html' ? (
         <WebView
           ref={webviewRef}
-          // Remount on theme or the initial position only — never on scroll.
-          key={`html-${theme}-${initialSpot?.anchor ?? 'n'}-${initialSpot ? Math.round(initialSpot.fraction * 1000) : 'n'}`}
+          // Keyed on the initial position only — never on the theme, which would reload the
+          // article and lose the reader's place.
+          key={`html-${initialSpot?.anchor ?? 'n'}-${initialSpot ? Math.round(initialSpot.fraction * 1000) : 'n'}`}
           source={htmlSource}
           injectedJavaScriptBeforeContentLoaded={injected}
           originWhitelist={['*']}
@@ -240,7 +281,6 @@ export default function ReaderScreen() {
           bounces={false}
           overScrollMode="never"
           onMessage={onMessage}
-          // A 404 means arXiv has no HTML for this paper: that is the PDF case.
           onHttpError={(event) => {
             if (event.nativeEvent.statusCode >= 400) setRenderer('pdf');
           }}
@@ -255,7 +295,7 @@ export default function ReaderScreen() {
       ) : (
         <WebView
           ref={webviewRef}
-          key={`pdf-${theme}`}
+          key={`pdf-${id}`}
           source={pdfSource}
           originWhitelist={['*']}
           startInLoadingState

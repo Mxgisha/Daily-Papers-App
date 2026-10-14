@@ -64,6 +64,20 @@ export function needsRepair(paper: SavedPaper): boolean {
   return paper.title.trim() === paper.id || paper.abstract.trim().length === 0;
 }
 
+/**
+ * True when a paper's metadata is worth caching.
+ *
+ * A paper whose title is its id, or which has no abstract, is a placeholder rather than
+ * information — caching it would poison the repair path. See `rememberPaper`.
+ */
+export function isUsefulMeta(paper: {
+  id: string;
+  title: string;
+  abstract: string;
+}): boolean {
+  return paper.title.trim() !== paper.id && paper.abstract.trim().length > 0;
+}
+
 async function readJson<T>(key: string, fallback: T): Promise<T> {
   try {
     const raw = await AsyncStorage.getItem(key);
@@ -246,7 +260,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   // Written immediately rather than debounced: this is what makes a title available the next
   // time the same paper is opened cold.
+  //
+  // It refuses to cache metadata that is missing its details, and that guard is load-bearing.
+  // The Saved tab renders the same PaperCard as everywhere else, so a broken saved entry
+  // registers itself here — and the repair path would then read back the very thing it was
+  // meant to fix and treat it as authoritative. That is how "saved from search shows the id"
+  // survived two rounds of fixes: the repair found a cache hit, decided there was nothing to
+  // do, and stopped. Because this cache is persisted, the poisoned entry outlived restarts.
   const rememberPaper = useCallback((paper: PaperItem) => {
+    if (!isUsefulMeta(paper)) return;
     const existing = known.current[paper.id];
     if (existing && existing.title === paper.title && existing.abstract === paper.abstract) {
       return;

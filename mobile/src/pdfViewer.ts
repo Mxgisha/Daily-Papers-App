@@ -6,20 +6,20 @@
  *
  * This works because **arXiv serves PDFs with `access-control-allow-origin: *`** (verified),
  * and also supports **range requests** (`accept-ranges: bytes`, 206 on a ranged GET) — so
- * PDF.js streams only the bytes it needs rather than pulling a 2 MB file before drawing
- * anything.
+ * PDF.js streams only the bytes it needs.
  *
- * Notes on speed, since the first version was slow:
+ * Notes on speed:
  *   - The raster is capped at devicePixelRatio 2. A modern phone reports 3, and rendering
  *     every page at 3x is more than twice the work for detail nobody can see at this size.
- *   - Page 1 is drawn and awaited before the scroll observer is attached, so the paper
- *     appears as early as possible rather than after the observer's first callback.
- *   - The first few pages are rendered eagerly; the rest stay lazy.
- *   - `rangeChunkSize` is raised from the 64 KB default, which cuts the number of round
- *     trips to arXiv substantially.
+ *   - Page 1 is drawn and awaited before the scroll observer is attached.
+ *   - `rangeChunkSize` is raised from the 64 KB default, cutting round trips to arXiv.
  *
- * Vectors are used for the classic UMD build rather than v4's ESM one: module loading from a
- * null-origin document is exactly what WebViews differ on.
+ * Colour is driven by CSS custom properties and `window.__dpTheme`, so the app can switch
+ * theme on a loaded document. Rebuilding the HTML to change colour would reload the PDF and
+ * lose the reader's page.
+ *
+ * The classic UMD build is used rather than v4's ESM one: module loading from a null-origin
+ * document is exactly what WebViews differ on.
  */
 
 const PDFJS_VERSION = '3.11.174';
@@ -39,30 +39,33 @@ export interface PdfViewerOptions {
 }
 
 export function pdfViewerHtml({ url, theme, start }: PdfViewerOptions): string {
-  const bg = theme === 'dark' ? '#16181c' : '#f2f2f4';
-  const fg = theme === 'dark' ? '#e6e6e6' : '#1a1a1a';
-  const dim = theme === 'dark' ? '#8b9199' : '#5f6570';
-  const page = theme === 'dark' ? '#1e2126' : '#ffffff';
   const startFraction = start?.fraction ?? 0;
   const startAnchor = start?.anchor ?? -1;
 
   return `<!doctype html>
-<html><head>
+<html lang="en" data-theme="${theme}">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
 <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 <style>
-  html, body { margin: 0; padding: 0; background: ${bg}; color: ${fg};
+  html[data-theme='dark'] {
+    --bg: #16181c; --fg: #e6e6e6; --dim: #8b9199; --page: #1e2126;
+  }
+  html[data-theme='light'] {
+    --bg: #f2f2f4; --fg: #1a1a1a; --dim: #5f6570; --page: #ffffff;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
     font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     overflow-x: hidden; }
-  #status { padding: 28px 20px; color: ${dim}; }
+  #status { padding: 28px 20px; color: var(--dim); }
   #pages { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 0 40px; }
-  .page { position: relative; background: ${page}; box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  .page { position: relative; background: var(--page); box-shadow: 0 1px 4px rgba(0,0,0,.25);
     max-width: 100%; }
   .page canvas { display: block; max-width: 100%; height: auto; }
-  .page .num { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: ${dim}; }
+  .page .num { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: var(--dim); }
   #bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 6px 12px; font-size: 11px;
-    color: ${dim}; text-align: center; background: ${bg}; opacity: .92; }
+    color: var(--dim); text-align: center; background: var(--bg); opacity: .92; }
 </style>
 </head>
 <body>
@@ -79,6 +82,10 @@ export function pdfViewerHtml({ url, theme, start }: PdfViewerOptions): string {
   var START_FRACTION = ${startFraction};
   var START_ANCHOR = ${startAnchor};
 
+  window.__dpTheme = function (t) {
+    document.documentElement.setAttribute('data-theme', t);
+  };
+
   function post(message) {
     if (window.ReactNativeWebView) {
       window.ReactNativeWebView.postMessage(JSON.stringify(message));
@@ -94,6 +101,7 @@ export function pdfViewerHtml({ url, theme, start }: PdfViewerOptions): string {
 
   var slots = [];
   function span() { return document.documentElement.scrollHeight - window.innerHeight; }
+  function fractionNow() { var sp = span(); return sp > 0 ? window.scrollY / sp : 0; }
 
   // Anchor is a page index, which makes the PDF path use the same position model as HTML.
   function currentAnchor() {
@@ -106,10 +114,14 @@ export function pdfViewerHtml({ url, theme, start }: PdfViewerOptions): string {
   function applyRestore() {
     if (START_ANCHOR >= 0 && slots[START_ANCHOR]) {
       slots[START_ANCHOR].scrollIntoView({ block: 'start' });
-      return;
+      return true;
     }
     var sp = span();
-    if (START_FRACTION > 0 && sp > 0) window.scrollTo(0, START_FRACTION * sp);
+    if (START_FRACTION > 0 && sp > 0) {
+      window.scrollTo(0, START_FRACTION * sp);
+      return true;
+    }
+    return false;
   }
 
   var userMoved = false;
@@ -117,13 +129,12 @@ export function pdfViewerHtml({ url, theme, start }: PdfViewerOptions): string {
     window.addEventListener(evt, function () { userMoved = true; }, { passive: true });
   });
 
-  // Called by the reader's header button. Clears the guard first: tapping the button is not
-  // the same as scrolling away.
   window.__dpRestore = function () {
     userMoved = false;
-    applyRestore();
-    post({ type: 'restored', ok: true });
-    return true;
+    var ok = applyRestore();
+    var result = { type: 'restored', ok: ok, fraction: fractionNow(), anchor: currentAnchor() };
+    post(result);
+    return result;
   };
 
   var lastSent = 0;
@@ -131,18 +142,14 @@ export function pdfViewerHtml({ url, theme, start }: PdfViewerOptions): string {
     var now = Date.now();
     if (now - lastSent < 400) return;
     lastSent = now;
-    var sp = span();
-    var fraction = sp > 0 ? window.scrollY / sp : 0;
-    bar.textContent = Math.round(fraction * 100) + '%';
-    post({ type: 'position', fraction: fraction, anchor: currentAnchor() });
+    bar.textContent = Math.round(fractionNow() * 100) + '%';
+    post({ type: 'position', fraction: fractionNow(), anchor: currentAnchor() });
   }
   window.addEventListener('scroll', report, { passive: true });
 
   window.pdfjsLib.getDocument({
     url: PDF_URL,
-    // Fewer, larger range requests: the default 64 KB makes many round trips to arXiv.
     rangeChunkSize: 262144,
-    // Skips a capability probe that costs time and is not needed here.
     isEvalSupported: false
   }).promise.then(function (pdf) {
     status.remove();
@@ -152,8 +159,6 @@ export function pdfViewerHtml({ url, theme, start }: PdfViewerOptions): string {
       var unscaled = first.getViewport({ scale: 1 });
       var width = Math.min(window.innerWidth, 1000) - 16;
       var scale = width / unscaled.width;
-      // Capped at 2. A phone reporting 3 would rasterise every page at 3x for no visible
-      // gain at this size.
       var ratio = Math.min(window.devicePixelRatio || 1, 2);
 
       for (var n = 1; n <= pdf.numPages; n++) {
@@ -196,19 +201,20 @@ export function pdfViewerHtml({ url, theme, start }: PdfViewerOptions): string {
       }
 
       // Draw page 1 and wait for it before anything else, so the paper is on screen as
-      // early as possible. This is the main perceptual win over the first version.
+      // early as possible.
       render(1, function () {
         if (START_ANCHOR >= 0 || START_FRACTION > 0) {
-          var tries = 0;
+          var attempts = 0;
           (function settle() {
-            if (userMoved || tries++ > 12) return;
+            if (userMoved || attempts++ > 12) return;
             applyRestore();
             setTimeout(settle, 350);
           })();
         }
         report();
+        // Tell the app the document is up, so it can drive and verify restore.
+        post({ type: 'ready' });
 
-        // A couple more immediately for continuity while scrolling starts.
         for (var k = 2; k <= Math.min(3, pdf.numPages); k++) render(k);
 
         var observer = new IntersectionObserver(function (entries) {

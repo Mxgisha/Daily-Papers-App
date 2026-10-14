@@ -116,13 +116,32 @@ export async function searchArxiv(query: string, maxResults = 25): Promise<Arxiv
  * with no list entry behind it. Saving from there used to store the arXiv id as the title,
  * which is why saved search results showed up as "2610.14091" instead of a name.
  */
+/**
+ * Translate a display id into the form arXiv's API expects.
+ *
+ * Old-style ids carry a category that the API rejects: `math.GT/0309136` returns zero
+ * entries, while `math/0309136` returns the paper. Verified against the live API. New-style
+ * ids pass through untouched.
+ */
+function toApiId(id: string): string {
+  const slash = id.indexOf('/');
+  if (slash === -1) return id;
+  const archive = id.slice(0, slash).split('.')[0];
+  return `${archive}${id.slice(slash)}`;
+}
+
 export async function fetchArxivById(id: string): Promise<ArxivResult | null> {
-  const params = new URLSearchParams({ id_list: id, max_results: '1' });
+  // Encoded by hand rather than with URLSearchParams, which turns the slash into %2F and
+  // changes which papers arXiv will match.
+  const idParam = encodeURIComponent(toApiId(id)).replace(/%2F/gi, '/');
   try {
-    const res = await fetch(`${endpoint()}?${params.toString()}`);
+    const res = await fetch(`${endpoint()}?id_list=${idParam}&max_results=1`);
     if (!res.ok) return null;
     const results = parseAtom(await res.text());
-    return results[0] ?? null;
+    // arXiv answers an unknown id with an entry carrying no title, so an empty title means
+    // "not found" rather than a paper with a blank name.
+    if (!results[0] || !results[0].title.trim()) return null;
+    return results[0];
   } catch {
     return null;
   }
