@@ -51,7 +51,17 @@ body { margin: 0 !important; }
 
 .ltx_page_header, .ltx_page_footer, #header, #footer, .arxiv-header, .arxiv-footer,
 .ltx_page_logo, #watermark-tr, #watermark-bl, .ltx_bib_list + .ltx_page_footer,
-.ltx_page_navbar, .ltx_page_sidebar {
+.ltx_page_navbar, .ltx_page_sidebar,
+/* arXiv's own site header, which every /html page ships and which arxiv-header-footer.css
+   paints dark. The real class is arxiv-html-header -- the .arxiv-header already in this list
+   never matched anything, so the bar stayed on screen directly above the app's own themed
+   header and read as two navigation bars. It is position:sticky, so it also followed the
+   reader down the page. */
+.arxiv-html-header, .html-header-logo, .html-header-nav,
+/* arXiv's site-wide announcement banner, a second bar below the first. */
+#announcement-banner, .ds-announcement,
+/* The report-an-issue dialog that now sits at the top of every paper body. */
+#modal-form, dialog#modal-form {
   display: none !important;
 }
 

@@ -1,7 +1,7 @@
 {
-  "base": "http://127.0.0.1:38651",
+  "base": "http://127.0.0.1:44587",
   "proxy": "http://127.0.0.1:8765",
-  "list": "{\"bodyText\":\"\u2630\\nPapers\\nLight\\n300 papers \u00b7 built 2026-10-14\\nAll\\nML / AI 259\\nCS 260\\nMath 7\\nPhysics 4\\nStatistics 17\\nSignals 12\\nPAPER OF THE DAY \u00b7 80 UPVOTES ON HF\\nGreenWAM: A World Foundation Model for Robotics\\nA robot needs a world model that predicts how its actions will change the scene and a policy that chooses those actions. Models are usually built and evaluated for only one of these roles, and every robot r\",\"cards\":58,\"inputs\":1}",
+  "list": "{\"bodyText\":\"\u2630\\nPapers\\nLight\\n1000 papers \u00b7 built 2026-10-14\\nAll\\nML / AI 875\\nCS 902\\nMath 14\\nPhysics 15\\nBiology 6\\nStatistics 45\\nSignals 17\\nEconomics 1\\nPAPER OF THE DAY \u00b7 81 UPVOTES ON HF\\nGreenWAM: A World Foundation Model for Robotics\\nA robot needs a world model that predicts how its actions will change the scene and a policy that chooses those actions. Models are usually built and evaluated for only one of these\",\"cards\":58,\"inputs\":1}",
   "theme": {
     "label_before": "Light",
     "label_clicked": "Light",
@@ -16,7 +16,7 @@
     "screenshot": "../reports/reader-mvp/04-saved.png"
   },
   "reader": {
-    "url": "http://127.0.0.1:38651/read/2610.13948",
+    "url": "http://127.0.0.1:44587/read/2610.13948",
     "iframe_src": "http://127.0.0.1:8765/read/2610.13948?theme=dark",
     "used_proxy": true,
     "pdf_fallback_shown": false,
