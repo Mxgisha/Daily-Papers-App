@@ -44,6 +44,7 @@ Phases 0 and 1 are done and verified, plus reader and feed feasibility spikes.
 | Reflowed reading at 390×844 | **viable** — zero page overflow, 91 screens for a 15k-word paper |
 | Feed diversity after centering | pairwise similarity **0.897 → 0.205**, categories 5 → 7 |
 | TypeScript feed vs Python reference | **identical ranking** on the real bundle |
+| Client executed end to end in a browser | **8/8 checks**, full pipeline in ~315 ms |
 
 ## The two findings that reshaped the design
 

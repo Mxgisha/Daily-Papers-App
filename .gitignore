@@ -26,3 +26,5 @@ dist/
 mobile/tests/fixtures/
 mobile/.expo/
 expo-env.d.ts
+mobile/.harness/
+dist-web/

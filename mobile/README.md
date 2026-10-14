@@ -13,19 +13,51 @@ Being precise about this matters more than the feature list.
 
 | Check | Command | Result |
 |---|---|---|
-| `vectors.bin` parses against the real artifact | `npm test` | passes |
+| `vectors.bin` parses and verifies against the manifest | `npm test` | passes |
 | Feed reproduces the **Python reference ranking exactly** | `npm test` | passes |
 | Row-offset mapping (`vec_index`) regression | `npm test` | passes |
-| Feed quality metrics match Python | `npm test` | passes |
+| Integrity: a single flipped byte is rejected | `npm test` | passes |
+| Truncated download rejected on size, before hashing | `npm test` | passes |
+| **Full pipeline in a real browser** over real HTTP | `harness/run_harness.py` | 8/8 checks |
 | App and test typecheck | `npm run typecheck` | clean |
 | Metro bundles the app | `npx expo export --platform android` | 2.9 MB Hermes bundle |
 
-**Not verified — needs a device or simulator.** Everything in `src/platform/`, because it
-touches native APIs: bundle download, `fzstd` decompression on Hermes, file writes, SQLite
-open, and the WebView reader. None of that can be exercised in Node.
+**Not verified — needs a device or simulator.** Bundle download, file writes, `expo-sqlite`
+and the WebView reader, because they are native APIs. Hermes is not exercised either (the
+harness runs in V8). These remain the client's largest unknowns.
 
 The split is deliberate: `src/core/` holds pure logic with no React Native imports, so it is
 fully testable, and `src/platform/` holds thin device adapters.
+
+## The browser harness
+
+`expo export` proves Metro resolves imports. It proves nothing about whether a bundle can be
+downloaded, decompressed, parsed, and turned into a feed. The harness closes that gap:
+
+```bash
+../.venv/bin/python harness/run_harness.py --bundle ../dist --out ../reports/harness
+```
+
+It bundles the real `src/core/` modules with esbuild, stages them beside the real artifacts,
+serves them, and drives a headless Chromium via WebDriver mobile emulation. It is not a mock:
+it fetches the real manifest, verifies `vectors.bin` by SHA-256, `fzstd`-decompresses the real
+delta, parses the real vectors, and generates a feed — all in a browser engine. It writes a
+screenshot and a JSON result alongside.
+
+Measured on the current corpus (1,633 papers): manifest 6 ms · vectors download + verify +
+parse 46 ms · delta download + decompress 124 ms · corpus build 3 ms · feed generation 136 ms.
+
+**The harness found two real bugs that nothing else could**, both in the delta format, which
+had never been consumed by anything:
+
+1. **The delta carried no `id`, no `vec_index`, and no vector.** A client could download it and
+   still be unable to place a single new paper in a feed, because nothing linked metadata to an
+   embedding. It now carries all three, making it self-sufficient.
+2. **The delta omitted `topics`**, silently zeroing `topic_overlap` — 15% of the ranking weight —
+   for every delta-sourced paper. `topicEntropy` measured **0.0**; after the fix, **3.065**
+   (normalized 0.901).
+
+Both now have harness checks that fail loudly if they regress.
 
 ## Layout
 

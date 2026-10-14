@@ -16,6 +16,7 @@ server-side ranking.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import sqlite3
@@ -28,7 +29,7 @@ import numpy as np
 import psycopg
 import zstandard as zstd
 
-from dailypapers.quantize import DIM, PACKED_BYTES, l2_normalize, pack_binary, quantize_int8
+from dailypapers.quantize import DIM, l2_normalize, quantize_int8
 
 VECTOR_MAGIC = b"DPV1"
 SCHEMA_VERSION = 1
@@ -292,15 +293,18 @@ def write_vectors(
     centroid = np.asarray(centroid, dtype=np.float32).reshape(DIM)
     centered = l2_normalize(matrix - centroid) if len(matrix) else matrix
 
-    if encoding == "binary":
-        codes = pack_binary(centered)
-        code_dtype = np.uint8
-        scales = np.ones(len(ids), dtype=np.float32)
-    elif encoding == "int8":
-        codes, scales = quantize_int8(centered)
-        code_dtype = np.int8
-    else:
-        raise ValueError(f"unsupported encoding: {encoding!r}")
+    if encoding != "int8":
+        # Binary was removed rather than repaired. `pack_binary` emits 96 bytes per row
+        # while the header declares dim=768, so a binary bundle could be *written* but
+        # never read back -- and it was measurably worse anyway (78.5% vs 99.8% recall@20
+        # after centering). A broken, unused option costs more than the optionality is
+        # worth. `pack_binary` stays in dailypapers/quantize.py for the evaluation harness.
+        raise ValueError(
+            f"unsupported encoding {encoding!r}: only 'int8' is supported. "
+            "Binary quantization is kept only in dailypapers/quantize.py for evaluation."
+        )
+    codes, scales = quantize_int8(centered)
+    code_dtype = np.int8
 
     header = {
         "encoding": encoding,
@@ -331,7 +335,7 @@ def write_vectors(
         f.write(centroid.astype("<f4").tobytes())
 
     bytes_per_paper = int(codes.shape[1] * np.dtype(code_dtype).itemsize) + 12  # +scale +id
-    return {
+    info = {
         "encoding": encoding,
         "dim": DIM,
         "count": int(len(ids)),
@@ -339,19 +343,38 @@ def write_vectors(
         "bytes_per_paper": bytes_per_paper,
         "bytes_per_paper_vectors_only": int(codes.shape[1] * np.dtype(code_dtype).itemsize),
     }
+    # Codes and scales are returned as well so write_delta can embed the same quantized
+    # vectors it just wrote, rather than quantizing a second time.
+    return info, codes, scales
 
 
-def write_delta(conn: psycopg.Connection, path: Path, since_days: int, level: int) -> int:
-    """Newline-delimited JSON of papers newer than the cutoff, for incremental sync."""
+def write_delta(
+    conn: psycopg.Connection,
+    path: Path,
+    since_days: int,
+    level: int,
+    vectors: tuple[dict[int, int], np.ndarray, np.ndarray] | None = None,
+) -> int:
+    """Newline-delimited JSON of papers newer than the cutoff, for incremental sync.
+
+    Each record carries its own quantized vector and its row offset, not just metadata.
+    Without `id`, `vec_index` and the vector, a client can download a delta and still be
+    unable to use any of it: there is no way to link a new paper to an embedding, so new
+    papers can never enter a feed. The format shipped that way for a phase because nothing
+    had ever consumed it.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT p.arxiv_base_id AS arxiv_id, p.title, p.abstract, p.primary_category,
-                   p.categories, p.published_at, p.venue, p.citation_count,
-                   p.html_available, p.html_url, p.pdf_url,
+            SELECT p.id, p.arxiv_base_id AS arxiv_id, p.title, p.abstract,
+                   p.primary_category, p.categories, p.published_at, p.venue,
+                   p.citation_count, p.html_available, p.html_url, p.pdf_url,
                    (SELECT json_agg(a.name ORDER BY pa.position)
                       FROM paper_authors pa JOIN authors a ON a.id = pa.author_id
-                     WHERE pa.paper_id = p.id) AS authors
+                     WHERE pa.paper_id = p.id) AS authors,
+                   (SELECT json_agg(json_build_array(t.name, pt.score) ORDER BY pt.score DESC)
+                      FROM paper_topics pt JOIN topics t ON t.id = pt.topic_id
+                     WHERE pt.paper_id = p.id) AS topics
               FROM papers p
              WHERE p.published_at >= now() - make_interval(days => %(days)s)
              ORDER BY p.published_at
@@ -359,6 +382,8 @@ def write_delta(conn: psycopg.Connection, path: Path, since_days: int, level: in
             {"days": since_days},
         )
         rows = cur.fetchall()
+
+    vec_index_map, codes, scales = vectors if vectors else ({}, None, None)
 
     # One-shot, not streamed: see compress(). Deltas are small, so this is cheap and it
     # keeps every artifact in the bundle parseable by the same client decompressor.
@@ -368,12 +393,68 @@ def write_delta(conn: psycopg.Connection, path: Path, since_days: int, level: in
             **r,
             "published_at": r["published_at"].isoformat() if r["published_at"] else None,
         }
+        row = vec_index_map.get(r["id"])
+        if row is not None and codes is not None:
+            record["vec_index"] = row
+            record["scale"] = float(scales[row])
+            record["vec"] = base64.b64encode(
+                np.asarray(codes[row], dtype=np.int8).tobytes()
+            ).decode("ascii")
         lines.append(json.dumps(record, separators=(",", ":")))
+
     payload = ("\n".join(lines) + "\n").encode() if lines else b""
     path.write_bytes(
-        zstd.ZstdCompressor(level=level, write_content_size=True).compress(payload)
+        zstd.ZstdCompressor(
+            level=level, write_content_size=True, write_checksum=True
+        ).compress(payload)
     )
     return len(rows)
+
+
+def validate_artifacts(out: Path) -> dict:
+    """Read every artifact back and assert it is internally consistent.
+
+    This exists because the builder shipped a broken binary encoding for a whole phase: it
+    wrote the file and reported success, but the artifact could never be read. Anything
+    that *can* be validated by reading it back should be, because a build nobody can
+    consume is worse than a build that fails loudly.
+
+    Raises ValueError on any inconsistency.
+    """
+    vf = read_vectors(out / "vectors.bin")
+    count, dim = vf.header["count"], vf.header["dim"]
+
+    if count != len(vf.ids):
+        raise ValueError(f"header count {count} != {len(vf.ids)} ids")
+    if count != len(vf.scales):
+        raise ValueError(f"header count {count} != {len(vf.scales)} scales")
+    if vf.codes.shape != (count, dim):
+        raise ValueError(
+            f"codes shape {vf.codes.shape} != ({count}, {dim}): "
+            "the encoding and the declared dim disagree"
+        )
+    if len(vf.centroid) != dim:
+        raise ValueError(f"centroid has {len(vf.centroid)} dims, expected {dim}")
+    if len(set(vf.ids.tolist())) != count:
+        raise ValueError("duplicate paper ids in vectors.bin")
+    if count and vf.ids.min() <= 0:
+        raise ValueError("non-positive paper id in vectors.bin")
+
+    # Every compressed artifact must declare its content size, or a client decompressor
+    # cannot preallocate and some reject the frame outright.
+    sizes: dict[str, int] = {}
+    for zst_path in sorted(out.rglob("*.zst")):
+        declared = zstd.frame_content_size(zst_path.read_bytes())
+        if declared <= 0:
+            raise ValueError(f"{zst_path.name} does not declare a content size")
+        sizes[str(zst_path.relative_to(out))] = declared
+
+    return {
+        "count": count,
+        "dim": dim,
+        "encoding": vf.header["encoding"],
+        "decompressed_sizes": sizes,
+    }
 
 
 def compress(src: Path, dst: Path, level: int) -> None:
@@ -385,7 +466,7 @@ def compress(src: Path, dst: Path, level: int) -> None:
     Hermes-compatible decompressor) runs at ~60 MB/s on these frames either way, but
     without a declared size it must grow the buffer dynamically.
     """
-    cctx = zstd.ZstdCompressor(level=level, write_content_size=True)
+    cctx = zstd.ZstdCompressor(level=level, write_content_size=True, write_checksum=True)
     dst.write_bytes(cctx.compress(src.read_bytes()))
 
 
@@ -428,7 +509,12 @@ def read_vectors(path: Path) -> VectorFile:
 
 def build(conn: psycopg.Connection, config: BundleConfig) -> dict:
     out = config.out_dir
-    (out / "delta").mkdir(parents=True, exist_ok=True)
+    delta_dir = out / "delta"
+    delta_dir.mkdir(parents=True, exist_ok=True)
+    # Clear stale deltas. They were accumulating across builds -- every previous day's file
+    # stayed on disk and got swept into the manifest's file list and size total.
+    for stale in delta_dir.glob("*.jsonl.zst"):
+        stale.unlink()
 
     papers = fetch_papers(conn, config)
     if not papers:
@@ -450,10 +536,18 @@ def build(conn: psycopg.Connection, config: BundleConfig) -> dict:
         centroid = matrix.mean(axis=0)
     else:
         centroid = np.zeros(DIM, dtype=np.float32)
-    encoding_info = write_vectors(vec_path, vec_ids, matrix, config.encoding, centroid)
+    encoding_info, codes, scales = write_vectors(
+        vec_path, vec_ids, matrix, config.encoding, centroid
+    )
 
     delta_path = out / "delta" / f"{datetime.now(timezone.utc):%Y-%m-%d}.jsonl.zst"
-    delta_count = write_delta(conn, delta_path, config.delta_since_days, config.compression_level)
+    delta_count = write_delta(
+        conn,
+        delta_path,
+        config.delta_since_days,
+        config.compression_level,
+        (vec_index, codes, scales),
+    )
 
     files = []
     for p in (db_path, vec_path, delta_path):
@@ -496,6 +590,10 @@ def build(conn: psycopg.Connection, config: BundleConfig) -> dict:
         # Remote ranking configuration: retune the recommender without an app release.
         "ranking": config.ranking,
     }
+
+    # Read the artifacts back before publishing. A build that cannot be consumed must fail
+    # here, in the build job, rather than on a user's phone.
+    manifest["validation"] = validate_artifacts(out)
 
     manifest_path = out / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))

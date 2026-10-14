@@ -437,17 +437,19 @@ position.
    0.856 → 0.154, categories 5 → 8** (`recsys/`).
 9. ~~**Scaffold the Expo client.**~~ ✅ **Done — core logic cross-verified against the Python
    reference; feed reproduces the ranking exactly on the real bundle** (`mobile/`).
-10. **Downscale figure images.** 28 MB of figures per paper makes lazy loading *and* server-side
-    resizing a requirement, not an optimisation. This is now the largest known cost in the reader.
-11. **Verify the client on a device.** Everything in `mobile/src/platform/` (download, fzstd on
-    Hermes, file writes, SQLite, WebView) is unproven — it cannot run in Node. This is the single
-    biggest remaining unknown.
-12. **Bundle the LaTeX math fallback.** Every arXiv math element embeds its original LaTeX, so
-    KaTeX with bundled fonts removes the dependency on the device shipping a math font, and
-    shrinks the math payload ~12x.
-13. **Re-measure quantization at ≥20k papers.** int8 is 99.8% at n=1,633, but binary degraded with
+10. ~~**Phase 2: make the client actually run.**~~ ✅ **Done — binary encoding removed and builds
+    now self-validate; manifest checksums verified; the delta was fixed (it carried no id,
+    vec_index or vector, and no topics, so it was unusable and silently zeroed the topic_overlap
+    term); a browser harness executes the real core over real HTTP — 8/8 checks** (`mobile/harness/`).
+11. **Downscale figure images.** 28 MB of figures per paper makes lazy loading *and* server-side
+    resizing a requirement, not an optimisation. Still the largest known cost in the reader.
+12. **Verify on a real device.** `expo-file-system`, `expo-sqlite`, the WebView reader and Hermes
+    remain unexercised; the harness covers the browser-equivalent path only.
+13. **Bundle the LaTeX math fallback.** Every arXiv math element embeds its original LaTeX, so
+    KaTeX with bundled fonts removes the dependency on the device shipping a math font.
+14. **Re-measure quantization at ≥20k papers.** int8 is 99.8% at n=1,633; binary degraded with
     corpus size, so confirm int8 stays flat rather than assuming it.
-14. **Add persistence**: reading progress, favorites, collections, and the local event queue with
-    idempotent upload. The `client_event_id` design exists server-side; the client is unwritten.
-15. **Then** move beyond content-based: the events collected above are what make collaborative
-    filtering possible at all.
+15. **Add persistence and telemetry**: reading progress, favorites, collections, and the local
+    event queue with idempotent upload. `client_event_id` exists server-side; the client is
+    unwritten, so **no data is being collected at all**.
+16. **Then** move beyond content-based: those events are what make collaborative filtering possible.

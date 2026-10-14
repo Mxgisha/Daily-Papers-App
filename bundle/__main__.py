@@ -162,7 +162,12 @@ def main(argv: list[str] | None = None) -> int:
     b = sub.add_parser("build", help="build bundle artifacts from Postgres")
     b.add_argument("--out", default="dist")
     b.add_argument("--window-days", type=int, default=365)
-    b.add_argument("--encoding", default="int8", choices=["int8", "binary"])
+    b.add_argument(
+        "--encoding",
+        default="int8",
+        choices=["int8"],
+        help="only int8: binary was removed after measuring 78.5%% vs 99.8%% recall@20",
+    )
     b.add_argument("--compression-level", type=int, default=12)
     b.add_argument("--limit", type=int, default=None, help="cap papers (smoke runs)")
     b.add_argument("--delta-days", type=int, default=1)

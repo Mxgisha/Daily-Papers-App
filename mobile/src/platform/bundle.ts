@@ -18,9 +18,23 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import * as SQLite from 'expo-sqlite';
 import { decompress } from 'fzstd';
+import { sha256 } from 'js-sha256';
 
 import { Corpus, type Paper } from '../core/feed';
+import {
+  type Digest,
+  findExpectation,
+  verifyFile,
+  verifySize,
+} from '../core/integrity';
 import { parseVectors, type VectorFile } from '../core/vectors';
+
+/**
+ * Pure-JS SHA-256. Chosen over a native crypto module deliberately: it works identically on
+ * device and on the web target, so the integrity path can be exercised in a browser rather
+ * than only on a phone. `verifyFile` accepts an injected digest so tests supply Node's.
+ */
+const digest: Digest = async (data) => sha256(new Uint8Array(data));
 
 const DB_NAME = 'bundle.db';
 const VECTORS_NAME = 'vectors.bin';
@@ -140,12 +154,26 @@ export async function installBundle(
   await downloadTo(`${base}/app_bundle.db.zst`, compressed);
 
   onProgress('decompressing database', 0.5);
-  const raw = decompressToBytes(await compressed.arrayBuffer());
+  const compressedBytes = await compressed.arrayBuffer();
+  const expectDb = findExpectation(remote.files, 'app_bundle.db.zst');
+  if (expectDb) {
+    // Size only. The zstd frame carries a content checksum that the decoder verifies, so
+    // hashing here would repeat work the decompressor already did.
+    verifySize(compressedBytes, expectDb);
+  }
+  const raw = decompressToBytes(compressedBytes);
   await writeBytes(paths.db, raw);
   if (compressed.exists) compressed.delete();
 
-  onProgress('downloading vectors', 0.8);
+  onProgress('verifying vectors', 0.8);
   await downloadTo(`${base}/${VECTORS_NAME}`, paths.vectors);
+  const expectVectors = findExpectation(remote.files, VECTORS_NAME);
+  if (expectVectors) {
+    // Full checksum here, unlike the database. A corrupted vectors.bin does not throw --
+    // it silently produces wrong recommendations, which is the worst failure mode this
+    // client has and the only one worth paying a hash for.
+    await verifyFile(await paths.vectors.arrayBuffer(), expectVectors, digest);
+  }
 
   await writeBytes(paths.manifest, new TextEncoder().encode(JSON.stringify(remote)));
   onProgress('done', 1);

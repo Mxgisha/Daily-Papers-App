@@ -1,0 +1,293 @@
+{
+  "ok": true,
+  "stages": [
+    {
+      "name": "fetch manifest",
+      "ms": 6,
+      "detail": "1633 papers, built 2026-10-14T04:48:31+00:00"
+    },
+    {
+      "name": "download + verify + parse vectors.bin",
+      "ms": 46,
+      "detail": "1633 vectors, 768-d, int8"
+    },
+    {
+      "name": "download + decompress delta",
+      "ms": 110,
+      "detail": "1633 records"
+    },
+    {
+      "name": "build corpus",
+      "ms": 3,
+      "detail": "1633 papers indexed"
+    },
+    {
+      "name": "generate feed",
+      "ms": 123,
+      "detail": "20 items from 1628 candidates"
+    }
+  ],
+  "manifest": {
+    "generated_at": "2026-10-14T04:48:31+00:00",
+    "corpus": {
+      "papers": 1633,
+      "with_embeddings": 1633,
+      "with_html": 1574,
+      "html_coverage": 0.9639,
+      "date_min": "2026-10-05T16:55:58+00:00",
+      "date_max": "2026-10-09T17:59:56+00:00",
+      "delta_papers": 1633,
+      "delta_since_days": 30
+    },
+    "encoding": {
+      "encoding": "int8",
+      "dim": 768,
+      "count": 1633,
+      "centered": true,
+      "bytes_per_paper": 780,
+      "bytes_per_paper_vectors_only": 768
+    }
+  },
+  "feed": [
+    {
+      "rank": 1,
+      "arxivId": "2610.10388",
+      "title": "RoboQuest: Generalist Physical Agents that Search, Inspect and Test",
+      "category": "cs.RO",
+      "score": 0.5068,
+      "similarity": 0.4494,
+      "stage": "ranked"
+    },
+    {
+      "rank": 2,
+      "arxivId": "2610.13116",
+      "title": "DRYLAB-Bench: Benchmarking the Biosecurity Risk of Agentic LLM Mutation Design",
+      "category": "cs.AI",
+      "score": 0.4806,
+      "similarity": 0.4074,
+      "stage": "ranked"
+    },
+    {
+      "rank": 3,
+      "arxivId": "2610.12341",
+      "title": "Can AI Agents Learn Their Way to the Top? Evaluating Heuristic Learning in a Long-Running Game Agent Competition",
+      "category": "cs.AI",
+      "score": 0.4976,
+      "similarity": 0.4143,
+      "stage": "ranked"
+    },
+    {
+      "rank": 4,
+      "arxivId": "2610.13145",
+      "title": "VIGOR: Verifiable Industrial Geometry Optimization and Repair in Scene Programs",
+      "category": "cs.AI",
+      "score": 0.4899,
+      "similarity": 0.3725,
+      "stage": "ranked"
+    },
+    {
+      "rank": 5,
+      "arxivId": "2610.13829",
+      "title": "MC-EvoBench: Auditing Experience-Driven Self-Improvement in Minecraft Agents",
+      "category": "cs.RO",
+      "score": 0.5032,
+      "similarity": 0.4033,
+      "stage": "ranked"
+    },
+    {
+      "rank": 6,
+      "arxivId": "2610.11194",
+      "title": "OmniDex: Scaling Dexterous Hand Grasping to Diverse Cluttered Scenes",
+      "category": "cs.RO",
+      "score": 0.4768,
+      "similarity": 0.3573,
+      "stage": "ranked"
+    },
+    {
+      "rank": 7,
+      "arxivId": "2610.12249",
+      "title": "Real-Time Motion Planning with Dynamic Hazards: Classical vs. Learning-Based Methods",
+      "category": "cs.RO",
+      "score": 0.4733,
+      "similarity": 0.3746,
+      "stage": "ranked"
+    },
+    {
+      "rank": 8,
+      "arxivId": "2610.11451",
+      "title": "SAIL: Scientific Agentic Intelligence via a Science-Aware Loop",
+      "category": "cs.CL",
+      "score": 0.4676,
+      "similarity": 0.3886,
+      "stage": "ranked"
+    },
+    {
+      "rank": 9,
+      "arxivId": "2610.12463",
+      "title": "From Reactive Containment to Proactive Assurance: Lessons from OpenAI, Anthropic, and Google Agent Security Incidents",
+      "category": "cs.CR",
+      "score": 0.4623,
+      "similarity": 0.3715,
+      "stage": "ranked"
+    },
+    {
+      "rank": 10,
+      "arxivId": "2610.11723",
+      "title": "MultiWorldBench: Do Independently Controlled Views Describe One Shared World?",
+      "category": "cs.AI",
+      "score": 0.4621,
+      "similarity": 0.36,
+      "stage": "ranked"
+    },
+    {
+      "rank": 11,
+      "arxivId": "2610.12403",
+      "title": "ViSkill: Reinforcing VLM Agents with Evolving Visual-Native Skills",
+      "category": "cs.CV",
+      "score": 0.4666,
+      "similarity": 0.3788,
+      "stage": "ranked"
+    },
+    {
+      "rank": 12,
+      "arxivId": "2610.13354",
+      "title": "AlphaNIST: Emergent Assembly Skills from Binary Task Rewards",
+      "category": "cs.AI",
+      "score": 0.4715,
+      "similarity": 0.356,
+      "stage": "ranked"
+    },
+    {
+      "rank": 13,
+      "arxivId": "2610.10201",
+      "title": "GAGR-Lab: Evaluating Joint Spatial-Geometric and Analytic Function Reasoning",
+      "category": "cs.AI",
+      "score": 0.4586,
+      "similarity": 0.4205,
+      "stage": "ranked"
+    },
+    {
+      "rank": 14,
+      "arxivId": "2610.11328",
+      "title": "Mine Odyssey: Benchmarking Spatial Agentic Intelligence in the Wild",
+      "category": "cs.AI",
+      "score": 0.4631,
+      "similarity": 0.3824,
+      "stage": "ranked"
+    },
+    {
+      "rank": 15,
+      "arxivId": "2610.12374",
+      "title": "AgentGarten: Code Worlds for Evolving Agents",
+      "category": "cs.CV",
+      "score": 0.4633,
+      "similarity": 0.3569,
+      "stage": "ranked"
+    },
+    {
+      "rank": 16,
+      "arxivId": "2610.10129",
+      "title": "When Algorithmic Exploration Becomes Cheap: A Case Study of Agentic Research in EDA",
+      "category": "cs.AR",
+      "score": 0.4576,
+      "similarity": 0.4027,
+      "stage": "ranked"
+    },
+    {
+      "rank": 17,
+      "arxivId": "2610.08773",
+      "title": "AdvSim2Real : Training Web Agents Against Adaptive Prompt Injection in a Web World Model",
+      "category": "cs.CL",
+      "score": 0.4554,
+      "similarity": 0.4144,
+      "stage": "ranked"
+    },
+    {
+      "rank": 18,
+      "arxivId": "2610.10782",
+      "title": "VICO: Visual Environments Co-Evolving for Vision-Language Model Reasoning",
+      "category": "cs.CV",
+      "score": 0.2992,
+      "similarity": 0.1354,
+      "stage": "exploration"
+    },
+    {
+      "rank": 19,
+      "arxivId": "2610.11333",
+      "title": "TokenBank: Financial Infrastructure for AI Services",
+      "category": "cs.AI",
+      "score": 0.3417,
+      "similarity": 0.2134,
+      "stage": "exploration"
+    },
+    {
+      "rank": 20,
+      "arxivId": "2610.12064",
+      "title": "ILM: An AI-Powered Storytelling Educational Tool",
+      "category": "cs.CL",
+      "score": 0.3049,
+      "similarity": 0.1453,
+      "stage": "exploration"
+    }
+  ],
+  "quality": {
+    "size": 20,
+    "distinctCategories": 6,
+    "categorySpread": {
+      "cs.AI": 8,
+      "cs.RO": 4,
+      "cs.CL": 3,
+      "cs.CV": 3,
+      "cs.CR": 1,
+      "cs.AR": 1
+    },
+    "topicEntropy": 3.065,
+    "topicEntropyNorm": 0.901,
+    "meanPairwiseSimilarity": 0.219,
+    "meanAgeDays": 5.8,
+    "pctHtml": 100,
+    "explorationItems": 3
+  },
+  "checks": [
+    {
+      "name": "vectors.bin verified against manifest sha256",
+      "pass": true,
+      "detail": "1633 rows x 768 dims"
+    },
+    {
+      "name": "delta records carry id + vec_index + vector",
+      "pass": true,
+      "detail": "1633/1633"
+    },
+    {
+      "name": "embedded delta vectors decode to the declared dimension",
+      "pass": true,
+      "detail": "decoded lengths 768 vs dim 768"
+    },
+    {
+      "name": "delta records carry topics (topic_overlap is 15% of ranking weight)",
+      "pass": true,
+      "detail": "1628/1633 have topics"
+    },
+    {
+      "name": "every delta vec_index is in range",
+      "pass": true,
+      "detail": "1633 checked"
+    },
+    {
+      "name": "onboarding seeds span multiple categories",
+      "pass": true,
+      "detail": "5 seeds across 5 categories"
+    },
+    {
+      "name": "feed has no duplicates and excludes seeds",
+      "pass": true,
+      "detail": "20 unique items"
+    },
+    {
+      "name": "exploration slots honoured",
+      "pass": true,
+      "detail": "3 configured"
+    }
+  ]
+}
