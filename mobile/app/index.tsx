@@ -22,15 +22,16 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 
-import papersJson from '../../assets/papers.json';
-import { searchArxiv } from '../../src/arxiv';
-import { PaperCard } from '../../src/components/PaperCard';
-import { fetchPaperOfTheDay, type HotPaper } from '../../src/hot';
-import { useTheme, type Palette } from '../../src/theme';
-import { TOPIC_GROUPS, matchesTopic, topicCounts } from '../../src/topics';
-import type { PaperItem } from '../../src/types';
+import papersJson from '../assets/papers.json';
+import { searchArxiv } from '../src/arxiv';
+import { PaperCard } from '../src/components/PaperCard';
+import { fetchPaperOfTheDay, type HotPaper } from '../src/hot';
+import { useLibrary } from '../src/library';
+import { useTheme, type Palette } from '../src/theme';
+import { TOPIC_GROUPS, matchesTopic, topicCounts } from '../src/topics';
+import type { PaperItem } from '../src/types';
 
 const DATA = papersJson as { papers: PaperItem[]; generated: string };
 const PAPERS: PaperItem[] = DATA.papers;
@@ -39,9 +40,10 @@ const GENERATED = DATA.generated.slice(0, 10);
 /** New-style (2610.13935) or old-style (math.GT/0309136), with an optional version. */
 const ARXIV_ID = /^(\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Za-z]{2})?\/\d{7})(v\d+)?$/;
 
-export default function PapersTab() {
+export default function PapersScreen() {
   const router = useRouter();
   const { palette } = useTheme();
+  const { recentSearches, rememberSearch, forgetSearch, clearSearches } = useLibrary();
 
   const [query, setQuery] = useState('');
   const [topic, setTopic] = useState('all');
@@ -65,32 +67,41 @@ export default function PapersTab() {
     };
   }, []);
 
-  const runRemoteSearch = useCallback(async () => {
-    const q = trimmed;
-    if (!q || ARXIV_ID.test(q)) return;
-    Keyboard.dismiss();
-    setSearching(true);
-    setSearchError(null);
-    try {
-      const results = await searchArxiv(q, 30);
-      setRemote(
-        results.map((r) => ({
-          id: r.id,
-          title: r.title,
-          abstract: r.abstract,
-          category: r.category,
-          published: r.published ? r.published.slice(0, 10) : null,
-          authors: r.authors,
-        })),
-      );
-      if (results.length === 0) setSearchError(`arXiv returned nothing for “${q}”`);
-    } catch (e) {
-      setSearchError(e instanceof Error ? e.message : String(e));
-      setRemote(null);
-    } finally {
-      setSearching(false);
-    }
-  }, [trimmed]);
+  const runRemoteSearch = useCallback(
+    async (term?: string) => {
+      // Takes the term explicitly so a recent-search tap can run immediately, rather than
+      // setting state and hoping a re-render has happened before this reads it.
+      const q = (term ?? trimmed).trim();
+      if (!q || ARXIV_ID.test(q)) return;
+
+      Keyboard.dismiss();
+      setSearching(true);
+      setSearchError(null);
+      try {
+        const results = await searchArxiv(q, 30);
+        setRemote(
+          results.map((r) => ({
+            id: r.id,
+            title: r.title,
+            abstract: r.abstract,
+            category: r.category,
+            published: r.published ? r.published.slice(0, 10) : null,
+            authors: r.authors,
+          })),
+        );
+        if (results.length === 0) setSearchError(`arXiv returned nothing for “${q}”`);
+        // Recorded only once arXiv has answered, so a typo or an offline attempt does not
+        // become a "recent search" the reader never actually ran.
+        rememberSearch(q);
+      } catch (e) {
+        setSearchError(e instanceof Error ? e.message : String(e));
+        setRemote(null);
+      } finally {
+        setSearching(false);
+      }
+    },
+    [trimmed, rememberSearch],
+  );
 
   const source = remote ?? PAPERS;
 
@@ -117,16 +128,19 @@ export default function PapersTab() {
   }, []);
 
   /**
-   * Clear the search when this screen loses focus.
+   * Deliberately NOT cleared when the screen loses focus.
    *
-   * A focus effect's returned function runs on blur, which covers both the header back button
-   * and the iOS back gesture — coming back from a paper should not leave the reader staring at
-   * a filtered list they no longer remember creating.
+   * Opening a paper to glance at it and coming straight back is the normal way to work through
+   * a result list, so having the results vanish underneath you makes the search useless. The
+   * × button is the only thing that clears it.
    */
-  useFocusEffect(
-    useCallback(() => {
-      return clearSearch;
-    }, [clearSearch]),
+
+  const runSearch = useCallback(
+    (term: string) => {
+      setQuery(term);
+      void runRemoteSearch(term);
+    },
+    [runRemoteSearch],
   );
 
   const header = (
@@ -139,7 +153,7 @@ export default function PapersTab() {
               setQuery(t);
               if (remote) setRemote(null);
             }}
-            onSubmitEditing={runRemoteSearch}
+            onSubmitEditing={() => void runRemoteSearch()}
             placeholder="Filter, or search all of arXiv"
             placeholderTextColor={palette.dim}
             autoCapitalize="none"
@@ -179,7 +193,7 @@ export default function PapersTab() {
                   : `${PAPERS.length} papers · built ${GENERATED}`}
             </Text>
             {trimmed.length > 1 && (
-              <Pressable onPress={runRemoteSearch} hitSlop={8}>
+              <Pressable onPress={() => void runRemoteSearch()} hitSlop={8}>
                 <Text style={styles.link}>
                   {searching ? 'searching…' : 'Search all of arXiv'}
                 </Text>
@@ -188,6 +202,34 @@ export default function PapersTab() {
           </View>
         )}
       </View>
+
+      {query.length === 0 && recentSearches.length > 0 && (
+        <View style={styles.recentWrap}>
+          <View style={styles.recentHead}>
+            <Text style={styles.recentLabel}>RECENT SEARCHES</Text>
+            <Pressable onPress={clearSearches} hitSlop={10} testID="recent-clear">
+              <Text style={styles.link}>Clear</Text>
+            </Pressable>
+          </View>
+          <View style={styles.recentChips}>
+            {recentSearches.map((term) => (
+              <Pressable
+                key={term}
+                onPress={() => runSearch(term)}
+                // Long-press to drop one, so removing a bad entry does not mean clearing all.
+                onLongPress={() => forgetSearch(term)}
+                delayLongPress={400}
+                testID={`recent-${term}`}
+                accessibilityRole="button"
+                accessibilityLabel={`Search again for ${term}. Long press to remove.`}
+                style={styles.chip}
+              >
+                <Text style={styles.chipText}>{term}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      )}
 
       <ScrollView
         horizontal
@@ -280,6 +322,14 @@ const makeStyles = (p: Palette) =>
     row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     meta: { color: p.dim, fontSize: 11, paddingHorizontal: 2 },
     link: { color: p.accent, fontSize: 12, fontWeight: '600' },
+    recentWrap: { paddingHorizontal: 14, paddingTop: 4, gap: 7 },
+    recentHead: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    recentLabel: { color: p.dim, fontSize: 10, letterSpacing: 0.6, fontWeight: '600' },
+    recentChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
     error: { color: '#e5534b', fontSize: 12, paddingHorizontal: 16, paddingTop: 8 },
     chips: { paddingHorizontal: 12, paddingVertical: 10, gap: 7, flexDirection: 'row' },
     chip: {

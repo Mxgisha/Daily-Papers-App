@@ -233,7 +233,7 @@ def main() -> int:
                     + json.dumps(json.dumps(entry))
                     + "); return true;"
                 )
-                driver.get(f"{base}/favorites")
+                driver.get(f"{base}/saved")
                 time.sleep(3.5)
                 saved_text = driver.js("return (document.body.innerText||'').slice(0,300);") or ""
                 fav["saved_tab_text"] = saved_text

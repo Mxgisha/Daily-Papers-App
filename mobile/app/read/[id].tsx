@@ -62,6 +62,10 @@ export default function ReaderScreen() {
     updateFavorite,
     isFavorite,
     toggleFavorite,
+    history,
+    recordOpen,
+    updateHistory,
+    markFinished,
   } = useLibrary();
 
   const webviewRef = useRef<WebView>(null);
@@ -136,6 +140,34 @@ export default function ReaderScreen() {
 
   const saved = isFavorite(id);
   const entry = favorites.find((f) => f.id === id);
+  const finished = !!history.find((h) => h.id === id)?.finishedAt;
+
+  /**
+   * Record the open, once per paper.
+   *
+   * Recorded immediately with whatever metadata we have — `recordOpen` merges rather than
+   * overwrites, so a placeholder here does not clobber a good existing record, and the
+   * metadata effect below fills in the details when the lookup returns. Waiting for the
+   * lookup instead would mean a paper read offline never appears in history at all.
+   */
+  const recordedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!ready || !spotLoaded || recordedFor.current === id) return;
+    recordedFor.current = id;
+    recordOpen(meta ?? { id, title: id, abstract: '', category: '', published: null, authors: [] });
+  }, [ready, spotLoaded, id, meta, recordOpen]);
+
+  // Fill in (or repair) the history record once the details are known.
+  useEffect(() => {
+    if (!meta) return;
+    updateHistory(id, {
+      title: meta.title,
+      abstract: meta.abstract,
+      category: meta.category,
+      authors: meta.authors,
+      published: meta.published,
+    });
+  }, [meta, id, updateHistory]);
 
   // Repair a saved entry whose metadata was not known when it was saved.
   useEffect(() => {
@@ -233,6 +265,9 @@ export default function ReaderScreen() {
       <Stack.Screen
         options={{
           title: headerTitle,
+          // Undo the drawer control the stack sets by default: from here the useful thing on
+          // the left is the way back, and this is the only screen that has one.
+          headerLeft: undefined,
           headerRight: () => (
             <View style={styles.headerRight}>
               <Pressable
@@ -272,6 +307,20 @@ export default function ReaderScreen() {
                 <Text style={[styles.glyph, saved && styles.glyphOn]}>
                   {saved ? '★' : '☆'}
                 </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => markFinished(id, !finished)}
+                testID="reader-finished"
+                accessibilityRole="button"
+                accessibilityState={{ selected: finished }}
+                accessibilityLabel={
+                  finished ? 'Mark as not finished' : 'Mark as finished reading'
+                }
+                hitSlop={12}
+                style={styles.headerButton}
+              >
+                <Text style={[styles.glyph, finished && styles.glyphOn]}>✓</Text>
               </Pressable>
 
               <ThemeToggle />
