@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useEffect } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -16,9 +16,18 @@ import type { PaperItem } from '../types';
 function PaperCardBase({ item }: { item: PaperItem }) {
   const router = useRouter();
   const { palette } = useTheme();
-  const { isFavorite, toggleFavorite } = useLibrary();
+  const { isFavorite, toggleFavorite, rememberPaper } = useLibrary();
   const saved = isFavorite(item.id);
   const styles = makeStyles(palette);
+
+  // Cache the metadata for anything that reaches the screen. The reader can then show and
+  // save a real title even when it is opened with no list entry behind it.
+  useEffect(() => {
+    rememberPaper(item);
+    // Keyed on id: the item object is rebuilt on every list render, and re-registering on
+    // identity alone would run this constantly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id, rememberPaper]);
 
   return (
     <View style={styles.row}>

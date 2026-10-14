@@ -108,3 +108,23 @@ export async function searchArxiv(query: string, maxResults = 25): Promise<Arxiv
   if (!res.ok) throw new Error(`arXiv search failed (${res.status})`);
   return parseAtom(await res.text());
 }
+
+/**
+ * Fetch one paper's metadata by id.
+ *
+ * The reader can be opened cold — from a pasted id, a deep link, or the paper of the day —
+ * with no list entry behind it. Saving from there used to store the arXiv id as the title,
+ * which is why saved search results showed up as "2610.14091" instead of a name.
+ */
+export async function fetchArxivById(id: string): Promise<ArxivResult | null> {
+  const params = new URLSearchParams({ id_list: id, max_results: '1' });
+  try {
+    const res = await fetch(`${endpoint()}?${params.toString()}`);
+    if (!res.ok) return null;
+    const results = parseAtom(await res.text());
+    return results[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+

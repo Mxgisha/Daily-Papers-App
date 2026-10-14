@@ -1,7 +1,7 @@
 {
-  "base": "http://127.0.0.1:45747",
+  "base": "http://127.0.0.1:45443",
   "proxy": "http://127.0.0.1:8765",
-  "list": "{\"bodyText\":\"Papers\\nLight\\n300 papers \u00b7 built 2026-10-14\\nAll\\nML / AI 259\\nCS 260\\nMath 7\\nPhysics 4\\nStatistics 17\\nSignals 12\\nPAPER OF THE DAY \u00b7 79 UPVOTES ON HF\\nGreenWAM: A World Foundation Model for Robotics\\nA robot needs a world model that predicts how its actions will change the scene and a policy that chooses those actions. Models are usually built and evaluated for only one of these roles, and every robot rec\",\"cards\":53,\"inputs\":1}",
+  "list": "{\"bodyText\":\"Papers\\nLight\\n300 papers \u00b7 built 2026-10-14\\nAll\\nML / AI 259\\nCS 260\\nMath 7\\nPhysics 4\\nStatistics 17\\nSignals 12\\nPAPER OF THE DAY \u00b7 80 UPVOTES ON HF\\nGreenWAM: A World Foundation Model for Robotics\\nA robot needs a world model that predicts how its actions will change the scene and a policy that chooses those actions. Models are usually built and evaluated for only one of these roles, and every robot rec\",\"cards\":53,\"inputs\":1}",
   "theme": {
     "label_before": "Light",
     "label_clicked": "Light",
@@ -9,18 +9,18 @@
     "changed": false,
     "screenshot": "../reports/reader-mvp/03-list-light.png"
   },
-  "paper": "hep-th/9711200",
+  "paper": "2610.13948",
   "favorites": {
-    "saved_tab_text": "Saved (1)\nLight\n1 saved paper\nHEP-TH/9711200 \u00b7 CS.AI\nHarness-saved paper\n\u2605\n\u25a4\n\u25a4\nPapers\n\u2605\n\u2605\nSaved (1)",
-    "paper_present_in_saved": false,
+    "saved_tab_text": "Saved (1)\nLight\n1 saved paper\n2610.13948 \u00b7 CS.AI\nHarness-saved paper\n\u2605\n\u25a4\n\u25a4\nPapers\n\u2605\n\u2605\nSaved (1)",
+    "paper_present_in_saved": true,
     "screenshot": "../reports/reader-mvp/04-saved.png"
   },
   "reader": {
-    "url": "http://127.0.0.1:45747/read/hep-th/9711200",
-    "iframe_src": null,
-    "used_proxy": false,
-    "pdf_fallback_shown": true,
-    "body_text": "Reading\nLight\nNo HTML full text \u2014 showing the PDF",
-    "screenshot": "../reports/reader-mvp/02-reader-hep-th_9711200.png"
+    "url": "http://127.0.0.1:45443/read/2610.13948",
+    "iframe_src": "http://127.0.0.1:8765/read/2610.13948?theme=dark",
+    "used_proxy": true,
+    "pdf_fallback_shown": false,
+    "body_text": "Reading\nLight",
+    "screenshot": "../reports/reader-mvp/02-reader-2610.13948.png"
   }
 }

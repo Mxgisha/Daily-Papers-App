@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daily Papers — Features, Stack and Roadmap</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 20mm; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: #16181c; background: #fff;
+    font: 10.5pt/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  h1 { font-size: 26pt; line-height: 1.15; margin: 0 0 6pt; letter-spacing: -0.5pt; }
+  h2 {
+    font-size: 15pt; margin: 22pt 0 8pt; padding-bottom: 4pt;
+    border-bottom: 1.5pt solid #16181c;
+  }
+  h3 { font-size: 11.5pt; margin: 14pt 0 5pt; }
+  h4 { font-size: 10.5pt; margin: 11pt 0 4pt; color: #333; }
+  p { margin: 0 0 7pt; }
+  ul, ol { margin: 0 0 8pt; padding-left: 16pt; }
+  li { margin-bottom: 3pt; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 9pt; background: #f2f3f5; padding: 0.5pt 2.5pt; border-radius: 2pt;
+  }
+  pre {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 8.2pt; line-height: 1.45; background: #f6f7f9; border: 0.5pt solid #e0e2e6;
+    border-left: 2.5pt solid #16181c; border-radius: 3pt; padding: 7pt 9pt;
+    white-space: pre-wrap; margin: 0 0 9pt;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 9pt; font-size: 9.3pt; }
+  th, td { text-align: left; vertical-align: top; padding: 4pt 6pt; border-bottom: 0.5pt solid #e0e2e6; }
+  th { background: #f2f3f5; font-weight: 600; }
+  .lede { font-size: 12pt; color: #444; margin-bottom: 14pt; }
+  .page-break { break-before: page; }
+  .avoid-break { break-inside: avoid; }
+  .note {
+    background: #f6f7f9; border-left: 2.5pt solid #8a8f98; padding: 7pt 9pt;
+    margin: 0 0 9pt; font-size: 9.5pt; border-radius: 0 3pt 3pt 0;
+  }
+  .warn { border-left-color: #b54708; }
+  .ok { border-left-color: #177245; }
+  .cover { padding-top: 52mm; }
+  .cover .sub { font-size: 13pt; color: #555; margin-top: 10pt; }
+  .cover .meta { margin-top: 30mm; font-size: 9.5pt; color: #666; border-top: 0.5pt solid #ccc; padding-top: 8pt; }
+  .tag {
+    display: inline-block; font-size: 8pt; background: #eef0f3; border-radius: 8pt;
+    padding: 1.5pt 6pt; margin: 0 3pt 3pt 0; color: #333;
+  }
+  .kpi { display: flex; gap: 10pt; margin: 0 0 10pt; }
+  .kpi div {
+    flex: 1; border: 0.5pt solid #e0e2e6; border-radius: 3pt; padding: 7pt 8pt;
+  }
+  .kpi b { display: block; font-size: 14pt; line-height: 1.1; }
+  .kpi span { font-size: 8.5pt; color: #666; }
+  .tree { font-size: 8.4pt; line-height: 1.5; }
+  .muted { color: #666; }
+</style>
+</head>
+<body>
+
+<!-- ================= COVER ================= -->
+<section class="cover">
+  <h1>Daily Papers</h1>
+  <div class="sub">A phone-native reader for research papers.<br>
+  Features, stack, architecture, and the path to the app stores.</div>
+  <div class="meta">
+    Prepared from the working repository · 10 commits · ~4,900 lines of Python and ~3,250 lines of TypeScript<br>
+    Client: Expo SDK 57 / React Native 0.86 / React 19 · Backend tooling: Python 3.14, PostgreSQL 17 + pgvector
+  </div>
+</section>
+
+<!-- ================= 1. WHAT IT IS ================= -->
+<section class="page-break">
+<h2>1. What the app is</h2>
+
+<p class="lede">arXiv papers are written for a two-column desktop PDF. Reading one on a phone
+means pinch-zooming around a page designed for A4, and every existing tool treats mobile as an
+afterthought. Daily Papers reads the paper as <em>reflowed text</em> instead.</p>
+
+<p>The app lists papers, opens any arXiv paper by id, and renders it as a single column of text
+sized for the screen. It remembers where you stopped, keeps a shelf of papers you want to come
+back to, and can read the PDF when arXiv has no HTML version.</p>
+
+<div class="kpi">
+  <div><b>96.4%</b><span>of recent arXiv papers have an HTML full text the app can reflow</span></div>
+  <div><b>100%</b><span>of papers openable — the remaining ~4% fall back to an in-app PDF reader</span></div>
+  <div><b>0</b><span>servers to run; the app has no backend of its own</span></div>
+</div>
+
+<h3>Who it is for</h3>
+<p>Someone who wants to keep up with a field on their phone — on a commute, in a queue — rather
+than at a desk. That is a different job from reference management, which is why the app does not
+try to be a library.</p>
+
+<h3>What it deliberately is not</h3>
+<p>Not a replacement for Zotero or Mendeley: no citation management, no annotation, no PDF
+library. Not a search engine: it is a reader that can search. Not a social network.</p>
+</section>
+
+<!-- ================= 2. FEATURES ================= -->
+<section class="page-break">
+<h2>2. Features</h2>
+
+<h3>Finding papers</h3>
+<table>
+  <tr><th style="width:30%">Feature</th><th>What it does</th></tr>
+  <tr>
+    <td><b>Bundled paper list</b></td>
+    <td>300 recent papers ship inside the app, so the list works with no network and opens
+    instantly. Regenerated from the project database by a script.</td>
+  </tr>
+  <tr>
+    <td><b>Search all of arXiv</b></td>
+    <td>Queries the arXiv API across the whole corpus rather than only the bundled snapshot.
+    Runs on submit rather than per keystroke, so typing stays instant and the API is not
+    hammered.</td>
+  </tr>
+  <tr>
+    <td><b>Topic filter</b></td>
+    <td>arXiv categories grouped into labels a person actually uses — ML / AI, CS, Math,
+    Physics, Biology, Statistics, Signals, Economics — with counts, so empty topics hide
+    themselves.</td>
+  </tr>
+  <tr>
+    <td><b>Open any arXiv id</b></td>
+    <td>Paste an id and open it. Handles both modern ids (<code>2610.13948</code>) and the
+    older slash form (<code>math.GT/0309136</code>), which otherwise breaks routing.</td>
+  </tr>
+  <tr>
+    <td><b>Paper of the day</b></td>
+    <td>Today's most-upvoted paper from Hugging Face Daily Papers — a real, human hotness
+    signal. See the note below on why citations are not used.</td>
+  </tr>
+</table>
+
+<div class="note">
+<b>On "hot right now".</b> Citations are useless for this: all 300 bundled papers are from a
+single day and exactly one has a citation. The app collects no read counts either, so "most
+read" is unavailable and would be dishonest to fake. Hugging Face upvotes are a genuine daily
+signal, so that is what the paper of the day uses. When it is unreachable the app falls back to a
+rotating local pick — and labels it differently, because that fallback is not popularity.
+</div>
+
+<h3>Reading</h3>
+<table>
+  <tr><th style="width:30%">Feature</th><th>What it does</th></tr>
+  <tr>
+    <td><b>Reflowed HTML reading</b></td>
+    <td>arXiv's own full text, with the site chrome removed and the article re-laid into one
+    column: comfortable measure, resizable text, native scrolling.</td>
+  </tr>
+  <tr>
+    <td><b>In-app PDF reader</b></td>
+    <td>For the ~4% of papers with no HTML, the PDF is rendered inside the app by PDF.js. No
+    native module, so the app still runs in Expo Go.</td>
+  </tr>
+  <tr>
+    <td><b>Reading position memory</b></td>
+    <td>Reopening a paper returns you to where you stopped, on both the HTML and PDF paths.</td>
+  </tr>
+  <tr>
+    <td><b>Figures load lazily</b></td>
+    <td>Opening a long paper used to pull every figure at once — 28&nbsp;MB against 388&nbsp;KB
+    of text. Figures now load only as they come near the screen.</td>
+  </tr>
+  <tr>
+    <td><b>No sideways scrolling</b></td>
+    <td>Footnotes, unparsed formulas, wide tables and long URLs were each dragging the page
+    wider than the screen. Each is contained or scrolls within itself.</td>
+  </tr>
+</table>
+
+<h3>Keeping track</h3>
+<table>
+  <tr><th style="width:30%">Feature</th><th>What it does</th></tr>
+  <tr>
+    <td><b>Save for later</b></td>
+    <td>Star any paper from the list or from inside the reader. Saved papers keep their own
+    title, authors and abstract, so the shelf renders with no network.</td>
+  </tr>
+  <tr>
+    <td><b>Saved tab</b></td>
+    <td>A second tab listing everything you kept, with a live count in the tab label.</td>
+  </tr>
+  <tr>
+    <td><b>Light / dark theme</b></td>
+    <td>Explicitly chosen, never automatic — the app chrome, the article and the tab bar all
+    follow the choice together.</td>
+  </tr>
+</table>
+</section>
+
+<!-- ================= 3. STACK ================= -->
+<section class="page-break">
+<h2>3. The stack, and why</h2>
+
+<h3>Client (what a user installs)</h3>
+<table>
+  <tr><th style="width:26%">Piece</th><th>Why this one</th></tr>
+  <tr>
+    <td><b>Expo SDK 57</b><br><span class="muted">React Native 0.86, React 19</span></td>
+    <td>One codebase for iOS, Android and web. Expo Go means the app can be tested on a real
+    phone without a build step, which is why native modules were avoided throughout.</td>
+  </tr>
+  <tr>
+    <td><b>TypeScript 7</b></td>
+    <td>Types are the cheapest test there is. The reader's position logic and the storage
+    shapes are the kind of thing that fails silently at runtime.</td>
+  </tr>
+  <tr>
+    <td><b>expo-router</b></td>
+    <td>File-based routing with tabs. The reader sits outside the tab group so it opens full
+    screen.</td>
+  </tr>
+  <tr>
+    <td><b>react-native-webview</b></td>
+    <td>Carries both renderers — the reflowed HTML and the PDF.js viewer. A WebView
+    <em>for one screen</em> is a deliberate choice, not a wrapped website: the markup is
+    deeply nested HTML with tables and native MathML, and parsing that into native components
+    would be a large amount of work with no good answer for equations.</td>
+  </tr>
+  <tr>
+    <td><b>AsyncStorage</b></td>
+    <td>Saved papers, reading positions and a metadata cache. Small key–value data; a database
+    would be overkill.</td>
+  </tr>
+  <tr>
+    <td><b>PDF.js 3.11.174</b><br><span class="muted">classic UMD build, from CDN</span></td>
+    <td>Renders PDFs with no native code. The classic build rather than v4's ESM one because
+    module loading from a null-origin document is exactly what WebViews differ on.</td>
+  </tr>
+  <tr>
+    <td><b>fast-xml-parser</b></td>
+    <td>arXiv's API returns Atom XML, and React Native has no <code>DOMParser</code>.</td>
+  </tr>
+</table>
+
+<div class="note ok">
+<b>The app has no backend.</b> Every content path is either a bundled asset or a direct request
+from the phone to arXiv. There is nothing to deploy, nothing to pay for, and nothing to go down.
+</div>
+
+<h3>Tooling (developer machine, never shipped)</h3>
+<table>
+  <tr><th style="width:26%">Piece</th><th>Why this one</th></tr>
+  <tr>
+    <td><b>Python 3.14</b></td>
+    <td>The whole data path — crawling, enriching, embedding, bundling — is one language.</td>
+  </tr>
+  <tr>
+    <td><b>PostgreSQL 17 + pgvector</b></td>
+    <td>Paper metadata and embeddings in one store, with ANN search. Docker Compose, host port
+    5433.</td>
+  </tr>
+  <tr>
+    <td><b>SPECTER2</b></td>
+    <td>Embeddings trained on scientific documents. Used for the (currently off-path)
+    recommendation work.</td>
+  </tr>
+  <tr>
+    <td><b>arXiv API + OpenAlex</b></td>
+    <td>arXiv is the daily firehose — the only source with same-day coverage. OpenAlex
+    enriches with citations, venue and topics.</td>
+  </tr>
+  <tr>
+    <td><b>Chromedriver + WebDriver</b></td>
+    <td>Verification. The reader is executed in a real browser at an emulated phone viewport
+    and screenshotted, rather than assumed to work.</td>
+  </tr>
+</table>
+
+<h3>Numbers that shaped decisions</h3>
+<table>
+  <tr><th style="width:52%">Measurement</th><th>Consequence</th></tr>
+  <tr><td>96.4% of recent papers have HTML full text</td><td>HTML is the primary path; PDF is the exception</td></tr>
+  <tr><td>Figures are 28 MB against 388 KB of text</td><td>Lazy loading is required, not a nicety</td></tr>
+  <tr><td>arXiv PDFs send <code>access-control-allow-origin: *</code></td><td>PDF.js can fetch them directly — no proxy, no native module</td></tr>
+  <tr><td>arXiv PDFs support range requests</td><td>PDF.js streams; the slowness was never the download</td></tr>
+  <tr><td>Chromium clamps headless viewports to 500px wide</td><td>Phone testing needs WebDriver emulation, not <code>--window-size</code></td></tr>
+</table>
+</section>
+
+<!-- ================= 4. ARCHITECTURE ================= -->
+<section class="page-break">
+<h2>4. How it fits together</h2>
+
+<pre>
+  ┌─────────────────────────── the phone ───────────────────────────┐
+  │                                                                  │
+  │  Papers tab ──┬── bundled papers.json  (300 papers, offline)      │
+  │               ├── arXiv API            (search all of arXiv)      │
+  │               └── Hugging Face API     (paper of the day)         │
+  │                          │                                        │
+  │                          ▼                                        │
+  │                   Reader screen                                   │
+  │                     │                                             │
+  │        ┌────────────┴────────────┐                                │
+  │        ▼                         ▼                                │
+  │   HTML full text            PDF (PDF.js)                          │
+  │   arxiv.org/html/{id}       arxiv.org/pdf/{id}                    │
+  │   + reader stylesheet       drawn in the WebView                  │
+  │        │                         │                                │
+  │        └────────────┬────────────┘                                │
+  │                     ▼                                             │
+  │            scroll position reported                               │
+  │            as { fraction, anchor }                                │
+  │                     │                                             │
+  │                     ▼                                             │
+  │   AsyncStorage ── saved papers · reading positions · titles       │
+  │                                                                   │
+  │  Saved tab reads straight from storage — no network needed        │
+  └───────────────────────────────────────────────────────────────────┘
+
+  Developer machine (offline tooling, not shipped):
+
+  arXiv API ─► ingest/ ─► PostgreSQL ─► SPECTER2 ─► bundle/ ─► papers.json
+                            + pgvector     embeddings     static      (the app)
+</pre>
+
+<h3>Why the reading position is stored as two numbers</h3>
+<p>A scroll offset in pixels is meaningless once the text reflows, the font size changes or the
+theme switches. A pure fraction of the document drifts too, because lazy figures keep growing
+the page after load. So the app stores both:</p>
+<ul>
+  <li><b>fraction</b> — how far through, as 0–1.</li>
+  <li><b>anchor</b> — the index of the topmost visible block element, or page for a PDF.</li>
+</ul>
+<p>On reopen the anchor is scrolled into view and the restore is re-applied for a few seconds
+while the document settles, stopping the moment the reader touches the screen. That is what
+turned an intermittent restore into a reliable one.</p>
+
+<h3>Why saves keep their own metadata</h3>
+<p>A paper opened from arXiv search is not in the bundled list. If a save stored only an id, the
+Saved tab would have nothing to render without a network round trip — and a paper opened cold
+from a pasted id would be saved under its number rather than its name. So saved entries carry
+their title, authors and abstract, and anything that appears on screen is cached so a later cold
+open still has a real title.</p>
+</section>
+
+<!-- ================= 5. LAYOUT ================= -->
+<section class="page-break">
+<h2>5. Folder layout</h2>
+
+<p>The repository has two halves: the <b>app</b> under <code>mobile/</code>, and the
+<b>tooling</b> that produces its data. Only <code>mobile/</code> is ever shipped.</p>
+
+<h3>mobile/ — the app</h3>
+<pre class="tree">
+mobile/
+  app/                          screens (file-based routing)
+    _layout.tsx                 root stack, theme + library providers
+    (tabs)/
+      _layout.tsx               the tab bar — Papers and Saved
+      index.tsx                 search · topics · paper of the day · list
+      favorites.tsx             saved papers
+    read/
+      [id].tsx                  the reader (HTML and PDF)
+      [id].web.tsx              reader for the web target
+
+  src/
+    theme.tsx                   light/dark palette, no automatic mode
+    library.tsx                 saved papers · reading positions · title cache
+    arxiv.ts                    arXiv API: search and fetch-by-id
+    hot.ts                      paper of the day (Hugging Face upvotes + local fallback)
+    topics.ts                   arXiv categories grouped into human labels
+    pdfViewer.ts                the PDF.js viewer, generated as an HTML page
+    types.ts                    the shape lists and search results normalise to
+    components/
+      PaperCard.tsx             one paper row, shared by both tabs
+      ThemeToggle.tsx           the header control
+    platform/
+      readerCss.generated.ts    generated — do not edit
+      bundle.ts                 (earlier work) static-bundle loader, off the app path
+    core/                       (earlier work) feed + vector logic, off the app path
+
+  assets/papers.json            the 300 bundled papers
+  scripts/
+    export_papers.py            rebuild assets/papers.json from the database
+    gen-reader-css.mjs          regenerate readerCss.generated.ts from reader/static/reader.css
+  harness/
+    run_reader_mvp.py           export → serve → drive a browser → screenshot every screen
+  tests/                        cross-checks against the Python reference
+  app.json                      Expo configuration
+  tsconfig.json                 app typecheck
+  tsconfig.test.json            test typecheck (Node types)
+</pre>
+
+<h3>Everything else — the tooling that feeds the app</h3>
+<pre class="tree">
+dailypapers/                    shared core: polite HTTP, arXiv, OpenAlex, embeddings,
+                                quantization, database access, configuration
+ingest/                         crawl · embed · init-db · migrate · stats
+bundle/                         static bundle builder, vector-file reader, verifier
+recsys/                         feed generation (off the app path today)
+reader/
+  extract.py                    pulls the article out of arXiv's page
+  static/reader.css             the reflow stylesheet — the app's reader CSS is generated from this
+  static/reader.js              measurement hooks used during verification
+  server.py                     local reader used for verification
+  driver.py                     minimal WebDriver client
+db/
+  schema.sql                    papers, versions, authors, topics, events, impressions
+  migrations/                   numbered, tracked in schema_migrations
+eval/                           quantization recall measurement
+spike/                          the original coverage study (standard library only)
+reports/                        screenshots and measurements produced by verification
+docker-compose.yml              PostgreSQL 17 + pgvector
+PLAN.md / README.md             strategy and reference notes
+</pre>
+
+<div class="note">
+<b>Two folders look unused but are not.</b> <code>src/core/</code> and
+<code>src/platform/bundle.ts</code> are a complete, verified on-device recommendation pipeline —
+vector parsing, int8 scoring, candidate generation, MMR diversification. It is deliberately off
+the reader's path so the reader stays understandable on its own. It is the foundation for
+recommendations later.
+</div>
+</section>
+
+<!-- ================= 6. STATE ================= -->
+<section class="page-break">
+<h2>6. What is verified, and what is not</h2>
+
+<p>Being precise about this matters more than a feature list.</p>
+
+<h3>Verified by running it</h3>
+<table>
+  <tr><th style="width:46%">Check</th><th>How</th></tr>
+  <tr><td>Reader reflows at phone width with no sideways scroll</td><td>Six papers, six categories, emulated 390×844 viewport</td></tr>
+  <tr><td>No content is clipped</td><td>Same run asserts zero overflowing elements</td></tr>
+  <tr><td>Any arXiv id opens, old style and new</td><td><code>1706.03762</code> and <code>hep-th/9711200</code></td></tr>
+  <tr><td>PDF renders in-app</td><td>Screenshot of a rendered PDF page</td></tr>
+  <tr><td>Saved tab renders saved papers</td><td>Seeded storage, "Saved (1)", entry with a filled star</td></tr>
+  <tr><td>Topic picker and paper of the day</td><td>Chips with counts; 79 upvotes fetched live</td></tr>
+  <tr><td>TypeScript typechecks, Android bundle builds</td><td><code>tsc --noEmit</code>; <code>expo export</code></td></tr>
+</table>
+
+<h3>Not verified — needs your phone</h3>
+<ul>
+  <li><b>The star tap and the tab press.</b> Automated input could not drive these; the storage
+  and render paths are verified instead, but the tap handlers themselves are unproven.</li>
+  <li><b>PDF.js on a real device.</b> The web target uses the browser's own PDF viewer, so the
+  PDF.js path only runs on native.</li>
+  <li><b>Reading-position restore on a device.</b> The anchor logic is verified in principle;
+  real scrolling behaviour has not been measured on hardware.</li>
+  <li><b>Math rendering.</b> arXiv serves native MathML, whose quality depends on the device
+  having a maths font. Every formula embeds its original LaTeX, so bundling KaTeX is the fix if
+  equations look wrong.</li>
+</ul>
+
+<h3>Known rough edges</h3>
+<ul>
+  <li><b>PDF.js loads from a CDN.</b> First use needs a network round trip for ~1.4&nbsp;MB.
+  Bundling it with the app would remove that, at the cost of repo size.</li>
+  <li><b>Reading position has no visible UI.</b> It restores silently; there is no "back to top"
+  or progress indicator outside the PDF path.</li>
+  <li><b>The bundled list is a snapshot.</b> 300 papers from one day, rebuilt by hand. There is
+  no refresh, so it ages.</li>
+  <li><b>Search needs a network</b> and hits arXiv's API directly, so it is subject to their
+  rate limits.</li>
+</ul>
+</section>
+
+<!-- ================= 7. FUTURE ================= -->
+<section class="page-break">
+<h2>7. Ideas for what is next</h2>
+
+<h3>Closest to done — small and high value</h3>
+<ul>
+  <li><b>A "back to top" and a progress indicator</b> in the reader. The position is already
+  known; showing it costs almost nothing.</li>
+  <li><b>Collections</b> — group saves into folders ("read for the survey", "thesis"). The
+  storage layer already holds a list; this adds a tag.</li>
+  <li><b>Mark as read</b>, and a reading-history view. The position data already implies it.</li>
+  <li><b>Share a paper</b> — the app deals in arXiv ids, which are already good links.</li>
+  <li><b>Export citations</b> to BibTeX, or push a paper into Zotero.</li>
+</ul>
+
+<h3>Substantial, and clearly wanted</h3>
+<ul>
+  <li><b>Offline reading.</b> Save the article HTML and its figures for a flight. The lazy-figure
+  work is most of the plumbing already.</li>
+  <li><b>Highlights and notes.</b> The hardest part is text selection inside the WebView, which
+  is why it is not in the MVP.</li>
+  <li><b>Daily digest notifications</b> — a local scheduled notification, no server needed.</li>
+  <li><b>KaTeX maths rendering</b> to remove the device-font dependency.</li>
+  <li><b>Figure downscaling</b> — figures are the largest data cost in the app by a wide margin.</li>
+  <li><b>Text-to-speech</b>, so a paper can be listened to.</li>
+</ul>
+
+<h3>The big one: recommendations</h3>
+<p>This is already built and verified, and deliberately switched off. Embeddings for the corpus,
+on-device scoring, MMR diversification and exploration all exist under <code>src/core/</code>,
+cross-checked against a Python reference implementation. What it lacks is a reason to trust it:
+with 300 papers from one day and no usage data, a "recommended" feed would be a guess dressed up
+as a feature.</p>
+<p>The honest sequence is: ship the reader, collect what people actually read, then turn it on.
+Which leads to the one piece of infrastructure worth adding.</p>
+
+<h3>The one thing worth adding next</h3>
+<div class="note warn">
+<b>Usage telemetry, opt-in.</b> Every feature in this document is currently blind — nobody knows
+which papers get opened, where readers stop, or what gets saved. The reading-position and
+saved-paper data already exists locally and would answer those questions. A small, clearly
+consented, privacy-respecting upload would make every future decision measurable instead of
+speculative, and it is the prerequisite for recommendations being anything more than a
+plausible guess.
+</div>
+</section>
+
+<!-- ================= 8. STORES ================= -->
+<section class="page-break">
+<h2>8. Getting it into the app stores</h2>
+
+<h3>What is required before anything else</h3>
+<table>
+  <tr><th style="width:34%">Requirement</th><th>Notes</th></tr>
+  <tr><td><b>A native build</b></td><td>Expo Go is a development shell and cannot be submitted. A standalone build is produced by EAS Build — a cloud service, so <b>no Mac is required</b> for iOS. This is the main reason EAS exists in this stack.</td></tr>
+  <tr><td><b>Apple Developer Program</b></td><td>~$99/year. Needed for TestFlight and the App Store.</td></tr>
+  <tr><td><b>Google Play account</b></td><td>~$25 once.</td></tr>
+  <tr><td><b>App identity</b></td><td>Bundle identifier (already <code>app.dailypapers</code>), app name, icon, splash screen.</td></tr>
+  <tr><td><b>Privacy policy</b></td><td>Required by both stores. A URL is enough.</td></tr>
+  <tr><td><b>Store listing</b></td><td>Screenshots per device size, description, keywords, category.</td></tr>
+</table>
+<p class="muted">Fees and review policies change — confirm current figures with Apple and Google
+before budgeting.</p>
+
+<h3>The path, in order</h3>
+<ol>
+  <li><b>Freeze scope.</b> Decide what "1.0" means. The reader, search, saves and position memory
+  are a coherent product on their own.</li>
+  <li><b>Add the finishing pieces the stores require:</b> icon and splash, a privacy policy, and
+  — on iOS — <b>Sign in with Apple if any other sign-in is offered</b> (there is currently no
+  sign-in at all, which is the simplest position to be in).</li>
+  <li><b>Configure EAS.</b> An <code>eas.json</code> with development, preview and production
+  profiles. The preview profile produces a shareable Android APK; production produces the
+  <code>.aab</code> and <code>.ipa</code> the stores want.</li>
+  <li><b>Test on real hardware.</b> Everything in section 6 marked unverified gets closed here.
+  Use a preview build rather than Expo Go — it is the same binary the stores would receive.</li>
+  <li><b>Beta first.</b> TestFlight on iOS, an internal or closed track on Google Play. Real
+  readers on real papers, for a couple of weeks.</li>
+  <li><b>Android, then iOS.</b> Android review is faster and the account is cheaper, so it makes
+  a better first submission. Note that <b>personal Google Play accounts created recently must
+  run a closed test with a minimum number of testers for a minimum period</b> before applying
+  for production — check the current rule, but budget time for it.</li>
+  <li><b>Submit.</b> Expect at least one rejection round. Both stores give a reason and a route
+  to appeal or resubmit.</li>
+  <li><b>Over-the-air updates afterwards.</b> JS-only changes can ship through EAS Update
+  without a store review, which shortens the loop considerably for a reader that mostly renders
+  text.</li>
+</ol>
+
+<h3>The three rejection risks worth planning for</h3>
+<table>
+  <tr><th style="width:30%">Risk</th><th>How to avoid it</th></tr>
+  <tr>
+    <td><b>iOS 4.2 — minimum functionality</b></td>
+    <td>Aimed at apps that are just a website in a shell. This app is not: it reflows content,
+    stores state on the device, works offline for its list, and has an in-app PDF reader.
+    Keep it that way, and be ready to explain what is native.</td>
+  </tr>
+  <tr>
+    <td><b>Content rights</b></td>
+    <td>The app <b>links</b> to arXiv and does not rehost PDFs or articles. Keep it that way;
+    the moment files are mirrored in bulk, licensing becomes a real question.</td>
+  </tr>
+  <tr>
+    <td><b>Privacy declarations</b></td>
+    <td>Both stores require a data-safety / privacy questionnaire. Today the honest answer is
+    that everything stays on the device. That answer changes the day telemetry is added — which
+    is a reason to design it opt-in and minimal from the start.</td>
+  </tr>
+</table>
+
+<h3>A realistic sequence</h3>
+<table>
+  <tr><th style="width:22%">Stage</th><th>Work</th></tr>
+  <tr><td><b>1. Polish</b></td><td>Icon, splash, empty states, error copy, offline behaviour. Small but visible.</td></tr>
+  <tr><td><b>2. Device pass</b></td><td>Close every "not verified" item on real hardware; fix what it surfaces.</td></tr>
+  <tr><td><b>3. Packaging</b></td><td>EAS profiles, keystore, signing credentials, privacy policy page.</td></tr>
+  <tr><td><b>4. Beta</b></td><td>TestFlight and a Play closed track; gather real reading feedback.</td></tr>
+  <tr><td><b>5. Launch</b></td><td>Android first, then iOS. Plan for one rejection round.</td></tr>
+  <tr><td><b>6. Iterate</b></td><td>EAS Update for fast fixes; then collections, offline reading, and eventually recommendations.</td></tr>
+</table>
+</section>
+
+<!-- ================= 9. APPENDIX ================= -->
+<section class="page-break">
+<h2>9. Appendix — running it</h2>
+
+<h3>Run the app</h3>
+<pre>cd mobile
+npm install
+npm start                 # scan the QR code with Expo Go
+
+npm run typecheck         # TypeScript, app and tests
+npm test                  # cross-checks against the Python reference</pre>
+
+<h3>Verify the reader in a browser</h3>
+<pre>cd mobile
+npx expo export --platform web --output-dir ../dist-web
+python3 harness/run_reader_mvp.py --web ../dist-web --out ../reports/reader-mvp</pre>
+<p class="muted">Exports the app, serves it, drives a headless Chromium at an emulated iPhone 14
+viewport, screenshots every screen and writes <code>report.json</code>.</p>
+
+<h3>Rebuild the bundled paper list</h3>
+<pre>docker compose up -d postgres
+.venv/bin/python -m ingest init-db
+.venv/bin/python -m ingest crawl --per-category 100
+.venv/bin/python -m ingest embed
+.venv/bin/python mobile/scripts/export_papers.py --out mobile/assets/papers.json --limit 300</pre>
+
+<h3>Regenerate the reader stylesheet</h3>
+<pre>cd mobile && npm run gen:reader-css</pre>
+<p class="muted">The app's reader CSS is generated from <code>reader/static/reader.css</code> so the
+verified stylesheet and the shipped one cannot drift apart. Edit the spike stylesheet, never the
+generated file.</p>
+
+<div class="note">
+<b>A note for whoever works on this next.</b> Three separate bugs in this project were found by
+running the software rather than reading it: a footnote style that made pages twice the width of
+the phone, a title that saved as a number, and a position that restored to the wrong place. The
+verification harness exists because compiling proves almost nothing about a reader. Keep using it.
+</div>
+</section>
+
+</body>
+</html>

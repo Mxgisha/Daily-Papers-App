@@ -30,3 +30,7 @@ mobile/.harness/
 dist-web/
 mobile/.harness/
 dist-web/
+mobile/data/
+mobile/.harness/
+.preview/
+.home/
