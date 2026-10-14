@@ -66,6 +66,11 @@
       overflowing_elements: overflowing(),
       images: imgs.length,
       broken_images: imgs.filter(function (i) { return i.complete && i.naturalWidth === 0; }).length,
+      /* Figures actually fetched. Eager loading makes this equal `images`; native lazy
+       * loading makes it reflect only what came near the viewport -- the number that
+       * decides a real read session's data cost. */
+      loaded_images: imgs.filter(function (i) { return i.naturalWidth > 0; }).length,
+      lazy_images: imgs.filter(function (i) { return i.loading === 'lazy'; }).length,
       image_bytes: bytes.img,
       resource_bytes: bytes.total,
       math: document.querySelectorAll('math').length,

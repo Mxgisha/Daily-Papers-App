@@ -44,15 +44,33 @@ class Article:
     metrics: dict = field(default_factory=dict)
 
 
+IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
+
+
+def _lazy(match: re.Match) -> str:
+    """Add native lazy loading to a figure tag.
+
+    arXiv's markup never marks figures lazy, so opening a 15k-word paper eagerly fetches all
+    62 figures -- 28 MB against 388 KB of text. Native `loading="lazy"` makes the browser
+    fetch only what comes near the viewport, which is the largest reduction available without
+    running an image-resizing service.
+    """
+    tag = match.group(0)
+    if "loading=" in tag.lower():
+        return tag
+    addition = ' loading="lazy" decoding="async"'
+    return tag[:-2] + addition + "/>" if tag.endswith("/>") else tag[:-1] + addition + ">"
+
+
 def extract(page_html: str) -> str:
-    """Pull the <article> element out and strip scripts/styles inside it."""
+    """Pull the <article> out, strip scripts/styles, and lazy-load its figures."""
     match = ARTICLE_RE.search(page_html)
     if not match:
         raise NotRenderable("no <article> element found")
     body = match.group(0)
     body = SCRIPT_RE.sub("", body)
     body = STYLE_RE.sub("", body)
-    return body
+    return IMG_TAG_RE.sub(_lazy, body)
 
 
 def _widest_table_columns(article_html: str) -> int:
