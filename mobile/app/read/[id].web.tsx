@@ -19,30 +19,37 @@ import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { useLocalSearchParams } from 'expo-router';
 
+import { useTheme } from '../../src/theme';
+
 const PROXY = (process.env.EXPO_PUBLIC_READER_PROXY ?? '').replace(/\/$/, '');
 const ARXIV_HTML = 'https://arxiv.org/html';
 
 type Status = 'probing' | 'ready' | 'unavailable';
 
-const shell: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  flex: 1,
-  backgroundColor: '#16181c',
-  color: '#e6e6e6',
-  font: '15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-  padding: '28px 22px',
-  gap: 12,
-};
-
 export default function ReaderWeb() {
   const params = useLocalSearchParams<{ id: string }>();
   // Old-style ids arrive percent-encoded (math.GT%2F0309136) so the route stays one segment.
   const id = decodeURIComponent(String(params.id ?? ''));
+  const { theme, palette } = useTheme();
   const [status, setStatus] = useState<Status>(PROXY ? 'probing' : 'ready');
 
-  const src = PROXY ? `${PROXY}/read/${id}` : `${ARXIV_HTML}/${id}`;
+  // The proxy renders the article, so the theme has to travel with the request — the app
+  // cannot reach into a cross-origin iframe to set it.
+  const src = PROXY
+    ? `${PROXY}/read/${encodeURIComponent(id)}?theme=${theme}`
+    : `${ARXIV_HTML}/${id}`;
   const pdf = `https://arxiv.org/pdf/${id}`;
+
+  const shell: CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    backgroundColor: palette.bg,
+    color: palette.text,
+    font: '15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    padding: '28px 22px',
+    gap: 12,
+  };
 
   useEffect(() => {
     if (!PROXY) return;

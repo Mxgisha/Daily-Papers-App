@@ -23,9 +23,74 @@ const css = readFileSync(SOURCE, 'utf-8');
 const OVERRIDES = `
 /* --- injected by the app --- */
 body { padding: 0.75rem 0 3rem !important; }
+
+/* --- injected by the app into arXiv's own page ---
+ * On native this has to beat arXiv's stylesheet, which is loaded and is more specific in
+ * places. So the layout-critical rules are repeated with !important: overriding a
+ * third-party stylesheet we do not control is exactly what !important is for.
+ */
+
+html, body {
+  overflow-x: hidden !important;
+  max-width: 100% !important;
+  width: auto !important;
+  min-width: 0 !important;
+}
+body { margin: 0 !important; }
+
 .ltx_page_header, .ltx_page_footer, #header, #footer, .arxiv-header, .arxiv-footer,
-.ltx_page_logo, #watermark-tr, #watermark-bl, .ltx_bib_list + .ltx_page_footer {
+.ltx_page_logo, #watermark-tr, #watermark-bl, .ltx_bib_list + .ltx_page_footer,
+.ltx_page_navbar, .ltx_page_sidebar {
   display: none !important;
+}
+
+/* The article column: never wider than the screen, whatever arXiv's CSS says. */
+.ltx_page_content, .ltx_page_main, .ltx_page_body, main, article.ltx_document {
+  max-width: 100% !important;
+  min-width: 0 !important;
+  width: auto !important;
+  margin: 0 auto !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+  overflow-x: hidden !important;
+}
+
+/* The two measured offenders: footnote bodies rendering inline, and formulas LaTeXML could
+ * not convert. Each pushes the page wider than the viewport on its own. */
+.ltx_note_outer { display: none !important; }
+.ltx_math_unparsed {
+  display: inline-block !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  vertical-align: middle !important;
+}
+
+/* Anything wide must scroll inside itself rather than drag the page. */
+img, svg, video, canvas, iframe, table, pre, math, figure, .ltx_table, .ltx_figure {
+  max-width: 100% !important;
+  box-sizing: border-box;
+}
+img, svg, video { height: auto !important; }
+
+/* Long URLs in references are the other half of "text runs off the screen". arXiv's own
+ * stylesheet also sets white-space:nowrap on .ltx_ref, and LaTeXML reuses that class for
+ * URLs -- so this has to be forced or bibliography URLs cannot wrap. */
+a, p, li, td, th, h1, h2, h3, h4, h5, h6, span, div, dt, dd, figcaption, .ltx_para {
+  overflow-wrap: anywhere !important;
+}
+.ltx_url, .ltx_ref.ltx_url, a.ltx_url, a[href^="http"] {
+  white-space: normal !important;
+  word-break: break-all !important;
+  overflow-wrap: anywhere !important;
+}
+
+/* Horizontal scrollers must not themselves create page-level overflow. */
+.ltx_table table, figure.ltx_table table, table.ltx_equation, table.ltx_eqn_table,
+.ltx_eqn_align table, .ltx_math_display, .ltx_eqn_table {
+  display: block !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch;
 }
 `;
 

@@ -22,6 +22,7 @@
     "expo-router": "~57.0.26",
     "expo-sqlite": "~57.0.4",
     "expo-status-bar": "~57.0.1",
+    "fast-xml-parser": "^5.11.2",
     "fzstd": "^0.1.1",
     "js-sha256": "^1.0.0",
     "react": "19.2.3",

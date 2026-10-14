@@ -172,6 +172,29 @@ class Driver:
         )
         return body.get("value")
 
+    def find_element(self, using: str, value: str) -> str:
+        """Return the WebDriver element id of the first match.
+
+        Needed for anything driven by pointer events: react-native-web's Pressable ignores
+        synthetic `click()` *and* hand-dispatched pointer events, so the only reliable way to
+        press a control is a real input event through the browser's own pipeline.
+        """
+        body = self._request(
+            "POST",
+            f"/session/{self._sid()}/element",
+            {"using": using, "value": value},
+        )
+        found = body.get("value")
+        if not isinstance(found, list) or not found:
+            # WebDriver returns an error object rather than a list when nothing matches.
+            # Raising here rather than letting a KeyError escape keeps callers able to catch
+            # DriverError as they expect.
+            raise DriverError(f"no element for {using}={value!r}")
+        return found[0]["element-6066-11e4-a52e-4f735466cecf"]
+
+    def click_element(self, element_id: str) -> None:
+        self._request("POST", f"/session/{self._sid()}/element/{element_id}/click", {})
+
     def screenshot(self, path: Path) -> None:
         body = self._request("GET", f"/session/{self._sid()}/screenshot")
         path.parent.mkdir(parents=True, exist_ok=True)

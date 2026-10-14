@@ -18,16 +18,12 @@
   --line-height: 1.65;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16181c;
-    --fg: #e6e6e6;
-    --muted: #9aa0a8;
-    --rule: #2b2f36;
-    --link: #79b0ff;
-    --code-bg: #1e2126;
-  }
-}
+/* Theme is explicit, never automatic.
+ *
+ * A `prefers-color-scheme` block used to live here so the article followed the device. It
+ * was removed deliberately: it made the article disagree with the app chrome around it
+ * (dark paper inside a light app, or the reverse), and it gave the user no way to override
+ * it. The reader now sets `data-theme` explicitly from the app's own theme. */
 
 html[data-theme="dark"] {
   --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8;
@@ -242,7 +238,18 @@ th, td {
  * scrolls instead of widening the page.
  */
 
-math { font-size: 1.02em; }
+/* Inline math wider than the line was being clipped at the right edge -- measured at 487px
+ * in a 390px viewport on 2610.13931. An inline-block with its own scroller keeps a long
+ * formula reachable rather than truncating it. `vertical-align: middle` limits the baseline
+ * disturbance an inline-block would otherwise cause. */
+math {
+  font-size: 1.02em;
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+}
 
 math[display="block"] {
   display: block;
@@ -266,7 +273,21 @@ math[display="block"] {
 /* ---- Citations & references ---- */
 
 cite, .ltx_cite { font-style: normal; }
-.ltx_ref { color: var(--link); white-space: nowrap; }
+
+/* Citation markers -- but `nowrap` is deliberately NOT used. LaTeXML reuses `ltx_ref` for
+ * URLs (`<a class="ltx_ref ltx_url ...">`), so a blanket nowrap made long bibliography URLs
+ * physically unwrappable: one entry measured 815px inside a 390px viewport and, because the
+ * page can no longer scroll, was silently clipped -- the text was simply gone.
+ *
+ * Scoping it to "short" refs is not expressible in CSS, so it is gone entirely. Numeric
+ * markers like "[12]" contain no break opportunity and still stay together; author-year
+ * citations like "(Zhang et al., 2018)" are long enough to overflow and need to wrap. */
+.ltx_ref { color: var(--link); white-space: normal; }
+
+.ltx_url, .ltx_ref.ltx_url, a.ltx_url {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
 
 .ltx_bibliography { font-size: 0.88rem; }
 .ltx_bibitem { margin-bottom: 0.6rem; }
@@ -298,3 +319,51 @@ cite, .ltx_cite { font-style: normal; }
 
 /* Metrics block, used by the headless measurement pass. Hidden in normal reading. */
 #__metrics { display: none; }
+
+/* ==========================================================================
+ * LaTeXML completeness
+ *
+ * Dropping arXiv's stylesheet also drops rules the markup depends on. Both of these were
+ * found by measuring real papers -- not the one used for the initial spike -- and both make
+ * the page wider than the phone.
+ * ========================================================================== */
+
+/* Footnotes. LaTeXML renders every footnote body inline and relies on its own stylesheet to
+ * hide it until hover. Without that rule the bodies join the text flow: measured on
+ * 2610.13948 the page came out 869px wide against a 390px viewport, from 16 of them.
+ * The mark stays; the body is not shown inline. */
+.ltx_note_outer { display: none; }
+.ltx_note { font-size: 0.72em; vertical-align: super; line-height: 0; }
+.ltx_note_mark { color: var(--link); }
+
+/* Unparsed math. LaTeXML emits `ltx_math_unparsed` when it could not convert a formula. It
+ * is an unstyled inline blob, so a long one pushes the page sideways -- measured at 673px
+ * on 2610.13931, and 2610.13940 has 24 of them. Give it its own scroller so an unrenderable
+ * formula cannot drag the whole page wide. */
+.ltx_math_unparsed {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+}
+
+/* ---- Never let the page scroll sideways ----
+ * Belt and braces for the same class of problem: anything LaTeXML emits that we have not
+ * anticipated still cannot widen the document. Long URLs in references are the common case. */
+
+html, body { overflow-x: hidden; max-width: 100%; }
+img, svg, video, canvas, table, pre { max-width: 100%; }
+
+/* Applied to the whole document rather than a hand-listed set of tags. LaTeXML wraps
+ * reference text in spans, and a hand-listed rule missed them: one bibliography entry came
+ * out 815px wide and, because the page can no longer scroll, was being silently CLIPPED
+ * instead. Clipping is worse than scrolling -- the text is simply gone. `anywhere` only
+ * breaks a word when there is no other way to fit it. */
+body *:not(pre):not(code):not(.ltx_verbatim) { overflow-wrap: anywhere; }
+a[href^="http"] { word-break: break-all; }
+
+/* Display math scrolls inside itself. Inline math is left alone: an inline-block would
+ * disturb the baseline, and page overflow is already impossible. */
+math[display="block"] { display: block; max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.ltx_math_display { max-width: 100%; overflow-x: auto; }

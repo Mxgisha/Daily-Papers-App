@@ -32,6 +32,35 @@ from reader.server import serve as serve_reader  # noqa: E402
 
 PROXY_PORT = 8765
 
+# react-native-web's Pressable responds to POINTER events, not `click`. Dispatching the full
+# sequence is what makes a synthetic interaction behave like a real tap; a bare
+# `element.click()` is silently ignored and makes a broken theme toggle look fine.
+# NOTE: no IIFE. WebDriver wraps the script in a function body and returns from *that*, so a
+# `return` inside an IIFE returns from the IIFE and the call yields undefined.
+CLICK_THEME = r"""
+var els = document.querySelectorAll('div,span,button,a');
+for (var i = 0; i < els.length; i++) {
+  var t = (els[i].textContent || '').trim();
+  if (t !== 'Light' && t !== 'Dark') continue;
+  ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (type) {
+    var Ctor = type.indexOf('pointer') === 0 ? PointerEvent : MouseEvent;
+    els[i].dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: window }));
+  });
+  return t;
+}
+return null;
+"""
+
+# The toggle label states the theme you can switch TO, so it flips on every press.
+THEME_LABEL = r"""
+var els = document.querySelectorAll('div,span,button,a');
+for (var i = 0; i < els.length; i++) {
+  var t = (els[i].textContent || '').trim();
+  if (t === 'Light' || t === 'Dark') return t;
+}
+return null;
+"""
+
 
 class SpaHandler(SimpleHTTPRequestHandler):
     """Serves the exported SPA, falling back to index.html for client-side routes."""
@@ -86,7 +115,7 @@ def main() -> int:
         with Driver(device=args.device) as driver:
             # ---- list screen -------------------------------------------------
             driver.get(base + "/")
-            time.sleep(4)
+            time.sleep(9)
             list_path = out / "01-list.png"
             driver.screenshot(list_path)
 
@@ -108,6 +137,50 @@ def main() -> int:
                 """
             )
             paper = args.paper or first_id
+
+            # ---- theme toggle, on the list screen ----------------------------
+            # The nav bar used to be hardcoded dark, so light mode left a black bar. Capture
+            # both themes and compare the header background to prove it follows.
+            #
+            # react-native-web's Pressable listens on POINTER events, not click, so a
+            # synthetic .click() does nothing -- which is what the first version of this
+            # check reported: two byte-identical screenshots and a "changed: False".
+            label_before = driver.js(THEME_LABEL)
+            # A real input event, not dispatchEvent: react-native-web's Pressable ignores
+            # both synthetic click() and hand-dispatched pointer events, so neither reached
+            # the handler and the toggle silently did nothing.
+            try:
+                el = driver.find_element(
+                    "xpath",
+                    "//*[@data-testid='theme-toggle']",
+                )
+                driver.click_element(el)
+                clicked = label_before
+            except DriverError:
+                clicked = driver.js(CLICK_THEME)
+            time.sleep(2.0)
+            label_after = driver.js(THEME_LABEL)
+            light_path = out / "03-list-light.png"
+            driver.screenshot(light_path)
+            report["theme"] = {
+                "label_before": label_before,
+                "label_clicked": clicked,
+                "label_after": label_after,
+                "changed": bool(label_before and label_after and label_before != label_after),
+                "screenshot": str(light_path),
+            }
+            # Back to the original theme so later screenshots stay comparable.
+            try:
+                driver.click_element(
+                    driver.find_element(
+                        "xpath",
+                        "//*[@data-testid='theme-toggle']",
+                    )
+                )
+            except DriverError:
+                driver.js(CLICK_THEME)
+            time.sleep(1.5)
+
             if not paper:
                 print("could not determine a paper id from the list")
                 return 1

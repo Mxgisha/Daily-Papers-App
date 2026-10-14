@@ -24,7 +24,7 @@ TITLE_RE = re.compile(
 TAG_RE = re.compile(r"<[^>]+>")
 
 PAGE = """<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="{theme}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -126,6 +126,17 @@ class ReaderHandler(BaseHTTPRequestHandler):
         if path == "/":
             return self._index()
 
+        # Same-origin proxy for the arXiv API. export.arxiv.org sends no CORS headers, so a
+        # browser cannot call it directly; the app's search code targets this path when
+        # EXPO_PUBLIC_ARXIV_PROXY is set, which lets the web build exercise exactly the same
+        # search path as native.
+        if path == "/arxiv":
+            url = "https://export.arxiv.org/api/query"
+            if parsed.query:
+                url = f"{url}?{parsed.query}"
+            resp = self.client.get(url)
+            return self._send(resp.status, resp.body, "application/atom+xml; charset=utf-8")
+
         m = re.match(r"^/(read|metrics|article)/(.+)$", path)
         if m:
             route, arxiv_id = m.group(1), m.group(2)
@@ -151,10 +162,17 @@ class ReaderHandler(BaseHTTPRequestHandler):
                 return self._send(200, article.html)
 
             title = _title(article.html, arxiv_id)
+            # Theme comes from the caller so the app's chosen theme wins. Defaults to light;
+            # the stylesheet has no prefers-color-scheme rule by design.
+            qs = parse_qs(parsed.query)
+            theme = (qs.get("theme", ["light"])[0] or "light").lower()
+            if theme not in ("light", "dark"):
+                theme = "light"
             return self._send(
                 200,
                 PAGE.format(
                     base_href=BASE_HREF,
+                    theme=theme,
                     title=_escape(title),
                     css=_static("reader.css"),
                     js=_static("reader.js"),
