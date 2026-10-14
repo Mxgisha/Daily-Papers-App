@@ -78,19 +78,32 @@ export default function ReaderScreen() {
   const [hasSpot, setHasSpot] = useState(false);
   const [meta, setMeta] = useState<PaperItem | null>(null);
 
+  /**
+   * Whether the saved position has been read yet.
+   *
+   * The WebView must not mount before it has. It used to: the position is read in an effect,
+   * which runs after the first render where storage is ready, so the WebView mounted with no
+   * position and was then remounted by its key changing — fetching the article from arXiv
+   * twice, and applying the restore only on the second, slower load.
+   */
+  const [spotLoaded, setSpotLoaded] = useState(false);
+
   /** What we are trying to land on, and how many times we have tried. */
   const target = useRef<ReadingSpot | null>(null);
   const tries = useRef(0);
 
-  const startedRef = useRef(false);
+  /** Which paper the state above belongs to, so a second paper re-reads rather than reuses. */
+  const loadedFor = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!ready || startedRef.current) return;
-    startedRef.current = true;
+    if (!ready || loadedFor.current === id) return;
+    loadedFor.current = id;
     const stored = positionFor(id);
     setInitialSpot(stored);
     setHasSpot(isUsableSpot(stored));
     target.current = isUsableSpot(stored) ? stored : null;
     setMeta(paperMeta(id));
+    setSpotLoaded(true);
   }, [ready, id, positionFor, paperMeta]);
 
   // Recolour the loaded page. Never a remount: that would reload the article.
@@ -199,8 +212,9 @@ export default function ReaderScreen() {
   const htmlSource = useMemo(() => ({ uri: `${ARXIV_HTML}${id}` }), [id]);
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
-  // Wait for storage so the first paint already knows where to scroll.
-  if (!ready) {
+  // Wait for storage, and for the saved position, so the first paint already knows where to
+  // scroll and the article is fetched once rather than twice.
+  if (!ready || !spotLoaded) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator color={palette.accent} />

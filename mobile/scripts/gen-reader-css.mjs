@@ -32,9 +32,20 @@ body { padding: 0.75rem 0 3rem !important; }
 
 html, body {
   overflow-x: hidden !important;
+  /* clip does not create a scroll container the way hidden does, so there is nothing for a
+     gesture to pan even in engines that would honour one. hidden is kept first as the
+     fallback for anything that does not know clip. */
+  overflow-x: clip !important;
   max-width: 100% !important;
   width: auto !important;
   min-width: 0 !important;
+  /* The actual fix for "swiping left drags the page off the edge". A wide element inside a
+     page with overflow-x hidden is still something a touch gesture can drag in a WebView;
+     touch-action: pan-y tells the engine this document only pans vertically, so a horizontal
+     swipe is not a scroll at all. overscroll-behavior-x: none stops the rubber-band at the
+     edges on top of that. */
+  touch-action: pan-y !important;
+  overscroll-behavior-x: none !important;
 }
 body { margin: 0 !important; }
 

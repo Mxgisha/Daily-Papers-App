@@ -57,7 +57,12 @@ export function pdfViewerHtml({ url, theme, start }: PdfViewerOptions): string {
   }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
     font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    overflow-x: hidden; }
+    overflow-x: hidden; overflow-x: clip;
+    /* Same reasoning as the HTML reader: a horizontal swipe must not drag the document.
+       pinch-zoom is allowed through because a scanned PDF genuinely needs it, whereas
+       reflowed text does not. */
+    touch-action: pan-y pinch-zoom;
+    overscroll-behavior-x: none; }
   #status { padding: 28px 20px; color: var(--dim); }
   #pages { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 0 40px; }
   .page { position: relative; background: var(--page); box-shadow: 0 1px 4px rgba(0,0,0,.25);
@@ -204,10 +209,23 @@ export function pdfViewerHtml({ url, theme, start }: PdfViewerOptions): string {
       // early as possible.
       render(1, function () {
         if (START_ANCHOR >= 0 || START_FRACTION > 0) {
+          // Same shape as the HTML reader's settle loop, and for the same reason: a fixed
+          // attempt count can expire before the document has finished growing. Here the
+          // height keeps changing as later pages get their canvases, so the loop runs until
+          // it stops changing rather than for a set number of tries.
           var attempts = 0;
+          var lastHeight = -1;
+          var stableFor = 0;
           (function settle() {
-            if (userMoved || attempts++ > 12) return;
+            if (userMoved || attempts++ > 60) return;
             applyRestore();
+            var h = document.documentElement.scrollHeight;
+            if (h > 0 && h === lastHeight) {
+              if (++stableFor >= 4) return;
+            } else {
+              stableFor = 0;
+              lastHeight = h;
+            }
             setTimeout(settle, 350);
           })();
         }

@@ -22,7 +22,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 
 import papersJson from '../../assets/papers.json';
 import { searchArxiv } from '../../src/arxiv';
@@ -110,23 +110,56 @@ export default function PapersTab() {
 
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
+  const clearSearch = useCallback(() => {
+    setQuery('');
+    setRemote(null);
+    setSearchError(null);
+  }, []);
+
+  /**
+   * Clear the search when this screen loses focus.
+   *
+   * A focus effect's returned function runs on blur, which covers both the header back button
+   * and the iOS back gesture — coming back from a paper should not leave the reader staring at
+   * a filtered list they no longer remember creating.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      return clearSearch;
+    }, [clearSearch]),
+  );
+
   const header = (
     <View>
       <View style={styles.header}>
-        <TextInput
-          value={query}
-          onChangeText={(t) => {
-            setQuery(t);
-            if (remote) setRemote(null);
-          }}
-          onSubmitEditing={runRemoteSearch}
-          placeholder="Filter, or search all of arXiv"
-          placeholderTextColor={palette.dim}
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="search"
-          style={styles.input}
-        />
+        <View style={styles.inputWrap}>
+          <TextInput
+            value={query}
+            onChangeText={(t) => {
+              setQuery(t);
+              if (remote) setRemote(null);
+            }}
+            onSubmitEditing={runRemoteSearch}
+            placeholder="Filter, or search all of arXiv"
+            placeholderTextColor={palette.dim}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            style={styles.input}
+          />
+          {query.length > 0 && (
+            <Pressable
+              onPress={clearSearch}
+              testID="search-clear"
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+              hitSlop={14}
+              style={styles.clear}
+            >
+              <Text style={styles.clearGlyph}>×</Text>
+            </Pressable>
+          )}
+        </View>
 
         {typedId ? (
           <Pressable
@@ -224,12 +257,22 @@ const makeStyles = (p: Palette) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: p.bg },
     header: { paddingHorizontal: 14, paddingTop: 12, gap: 6 },
+    inputWrap: { position: 'relative', justifyContent: 'center' },
+    clear: {
+      position: 'absolute',
+      right: 4,
+      // A tap target big enough to hit, without a visible box around it.
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+    },
+    clearGlyph: { color: p.dim, fontSize: 20, lineHeight: 22 },
     input: {
       backgroundColor: p.inputBg,
       borderWidth: 1,
       borderColor: p.border,
       borderRadius: 9,
-      paddingHorizontal: 12,
+      paddingLeft: 12,
+      paddingRight: 40,
       paddingVertical: 10,
       color: p.text,
       fontSize: 15,
