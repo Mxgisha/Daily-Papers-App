@@ -17,9 +17,12 @@
     },
     "plugins": [
       "expo-router",
-      "expo-sqlite",
       "expo-status-bar"
     ],
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
     "experiments": {
       "typedRoutes": true
     }

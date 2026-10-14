@@ -28,3 +28,5 @@ mobile/.expo/
 expo-env.d.ts
 mobile/.harness/
 dist-web/
+mobile/.harness/
+dist-web/

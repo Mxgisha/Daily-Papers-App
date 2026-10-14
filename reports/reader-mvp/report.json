@@ -1,0 +1,11 @@
+{
+  "base": "http://127.0.0.1:34701",
+  "proxy": "http://127.0.0.1:8765",
+  "list": "{\"bodyText\":\"Today's Papers\\n300 papers \u00b7 list built 2026-10-14\\n2610.13948 \u00b7 CS.AI \u00b7 2026-10-09\\nCan Language Models Play the Wikipedia Game?\\nAlexander Hickey, Joanna Knight, James Bishop\\nLanguage models increasingly support or automate information retrieval from document collections too large to index. This task is difficult when it requires specialist linguistic or scientific knowledge. We used the Wikipedia G\",\"cards\":0,\"inputs\":1}",
+  "paper": "2610.13948",
+  "reader": {
+    "url": "http://127.0.0.1:34701/read/2610.13948",
+    "iframe_src": "http://127.0.0.1:8765/read/2610.13948",
+    "used_proxy": true
+  }
+}

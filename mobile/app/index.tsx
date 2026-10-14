@@ -1,128 +1,122 @@
 /**
- * The daily feed.
+ * Paper list — the reader MVP's entry point.
  *
- * Runs the whole on-device pipeline: install/load the bundle, pick onboarding seeds, generate
- * a ranked feed, and render it. There is no server call anywhere in this path.
+ * Deliberately simple: a bundled list of papers plus a single input that either filters the
+ * list or opens an arbitrary arXiv ID. No bundle download, no vectors, no SQLite, no
+ * recommendations. The point of this screen is to get to the reader in one tap.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
+  Keyboard,
   Pressable,
-  RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { generateFeed, configFromManifest, type Corpus, type Scored } from '../src/core/feed';
-import { pickSeeds } from '../src/core/seeds';
-import { installBundle, isInstalled, loadBundle, type Manifest } from '../src/platform/bundle';
+import papersJson from '../assets/papers.json';
 
-/**
- * Where the static bundle is served from during development.
- *
- * 10.0.2.2 reaches the host machine from an Android emulator. For a physical device use
- * the host's LAN IP, e.g. EXPO_PUBLIC_BUNDLE_URL=http://192.168.1.20:8000
- *
- * Serve the artifacts with:
- *   cd dist && python3 -m http.server 8000
- */
-const BUNDLE_BASE_URL = process.env.EXPO_PUBLIC_BUNDLE_URL ?? 'http://10.0.2.2:8000';
+interface Paper {
+  id: string;
+  title: string;
+  abstract: string;
+  category: string;
+  published: string | null;
+  html: boolean;
+  pdf: string | null;
+  citations: number;
+  authors: string[];
+}
 
-const SEED_COUNT = 5;
+const DATA = papersJson as { papers: Paper[]; generated: string };
+const PAPERS = DATA.papers;
+const GENERATED = DATA.generated.slice(0, 10);
 
-export default function FeedScreen() {
+/** New-style (2610.13935) or old-style (math.GT/0309136), with an optional version. */
+const ARXIV_ID = /^(\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Za-z]{2})?\/\d{7})(v\d+)?$/;
+
+export default function PaperList() {
   const router = useRouter();
-  const [feed, setFeed] = useState<Scored[]>([]);
-  const [manifest, setManifest] = useState<Manifest | null>(null);
-  const [status, setStatus] = useState('starting');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(true);
+  const [query, setQuery] = useState('');
 
-  const load = useCallback(async (force: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      let active: Manifest | null = null;
-      if (force || !isInstalled()) {
-        setStatus('fetching bundle');
-        active = await installBundle(BUNDLE_BASE_URL, (stage) => setStatus(stage));
-      }
+  const trimmed = query.trim();
+  const typedId = ARXIV_ID.test(trimmed) ? trimmed : null;
 
-      setStatus('opening bundle');
-      const { corpus, manifest: m } = await loadBundle();
-      active = m;
-      setManifest(m);
+  const filtered = useMemo(() => {
+    const q = trimmed.toLowerCase();
+    if (!q) return PAPERS;
+    return PAPERS.filter(
+      (p) =>
+        p.title.toLowerCase().includes(q) ||
+        p.category.toLowerCase().includes(q) ||
+        p.abstract.toLowerCase().includes(q),
+    );
+  }, [trimmed]);
 
-      setStatus('building feed');
-      const seeds = pickSeeds(corpus, SEED_COUNT);
-      if (seeds.length === 0) throw new Error('bundle contains no renderable papers');
-
-      const config = configFromManifest(m);
-      const { feed: items, stats } = generateFeed(
-        corpus,
-        seeds.map((p) => p.id),
-        config,
-        { rngSeed: Date.now() % 100000 },
-      );
-
-      setFeed(items);
-      setStatus(
-        `${items.length} papers · ${stats.candidates} candidates · ${corpus.size} in corpus`,
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load(false);
-  }, [load]);
+  const open = (id: string) => {
+    Keyboard.dismiss();
+    router.push(`/read/${id}`);
+  };
 
   return (
     <View style={styles.screen}>
+      <View style={styles.header}>
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          onSubmitEditing={() => typedId && open(typedId)}
+          placeholder="Filter papers, or paste an arXiv ID"
+          placeholderTextColor="#6f757d"
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="go"
+          style={styles.input}
+        />
+        <Text style={styles.meta}>
+          {trimmed && !typedId
+            ? `${filtered.length} of ${PAPERS.length} papers`
+            : `${PAPERS.length} papers · list built ${GENERATED}`}
+        </Text>
+      </View>
+
       <FlatList
-        data={feed}
-        keyExtractor={(item) => String(item.paper.id)}
-        refreshControl={
-          <RefreshControl refreshing={busy} onRefresh={() => load(false)} tintColor="#8ab4f8" />
-        }
+        data={filtered}
+        keyExtractor={(item) => item.id}
+        keyboardShouldPersistTaps="handled"
+        // The "open this ID" affordance sits at the top of the list rather than behind a
+        // separate button, so one input serves both intents.
         ListHeaderComponent={
-          <View style={styles.header}>
-            {busy && <ActivityIndicator color="#8ab4f8" />}
-            <Text style={styles.status}>{error ? `error: ${error}` : status}</Text>
-            {manifest && (
-              <Text style={styles.substatus}>
-                bundle {manifest.generated_at.slice(0, 10)} ·{' '}
-                {manifest.corpus.papers.toLocaleString()} papers ·{' '}
-                {(100 * manifest.corpus.html_coverage).toFixed(0)}% HTML ·{' '}
-                {manifest.encoding.encoding}
+          typedId ? (
+            <Pressable style={styles.openRow} onPress={() => open(typedId)}>
+              <Text style={styles.openTitle}>Open {typedId}</Text>
+              <Text style={styles.openHint}>fetch this paper from arXiv</Text>
+            </Pressable>
+          ) : null
+        }
+        ListEmptyComponent={
+          <Text style={styles.empty}>
+            No paper matches “{trimmed}”. Paste an arXiv ID to open it directly.
+          </Text>
+        }
+        renderItem={({ item }) => (
+          <Pressable style={styles.card} onPress={() => open(item.id)}>
+            <Text style={styles.cardMeta}>
+              {item.id} · {item.category}
+              {item.published ? ` · ${item.published}` : ''}
+              {item.html ? '' : ' · PDF only'}
+            </Text>
+            <Text style={styles.cardTitle}>{item.title}</Text>
+            {item.authors.length > 0 && (
+              <Text style={styles.cardAuthors} numberOfLines={1}>
+                {item.authors.join(', ')}
               </Text>
             )}
-          </View>
-        }
-        renderItem={({ item, index }) => (
-          <Pressable
-            style={styles.card}
-            onPress={() => router.push(`/read/${item.paper.arxivId}`)}
-          >
-            <Text style={styles.rank}>
-              {index + 1} · {item.paper.primaryCategory}
-              {item.stage === 'exploration' ? ' · exploring' : ''}
-            </Text>
-            <Text style={styles.title}>{item.paper.title}</Text>
-            <Text style={styles.abstract} numberOfLines={3}>
-              {item.paper.abstract}
-            </Text>
-            <Text style={styles.components}>
-              score {item.score.toFixed(3)} · sim {item.components.similarity.toFixed(3)} · rec{' '}
-              {item.components.recency.toFixed(2)} · topic{' '}
-              {item.components.topic_overlap.toFixed(2)}
+            <Text style={styles.cardAbstract} numberOfLines={2}>
+              {item.abstract}
             </Text>
           </Pressable>
         )}
@@ -133,18 +127,45 @@ export default function FeedScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#16181c' },
-  header: { padding: 16, gap: 6 },
-  status: { color: '#e6e6e6', fontSize: 13 },
-  substatus: { color: '#9aa0a8', fontSize: 11 },
+  header: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 8, gap: 6 },
+  input: {
+    backgroundColor: '#1e2126',
+    borderWidth: 1,
+    borderColor: '#2b2f36',
+    borderRadius: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#e6e6e6',
+    fontSize: 15,
+  },
+  meta: { color: '#8b9199', fontSize: 11, paddingHorizontal: 2 },
+  openRow: {
+    margin: 14,
+    marginTop: 6,
+    padding: 14,
+    borderRadius: 9,
+    backgroundColor: '#1b2a3a',
+    borderWidth: 1,
+    borderColor: '#2f4a66',
+    gap: 2,
+  },
+  openTitle: { color: '#8ab4f8', fontSize: 15, fontWeight: '600' },
+  openHint: { color: '#7a97b5', fontSize: 12 },
+  empty: { color: '#8b9199', fontSize: 13, padding: 20, textAlign: 'center' },
   card: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#2b2f36',
-    gap: 5,
+    gap: 4,
   },
-  rank: { color: '#8ab4f8', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
-  title: { color: '#f0f0f0', fontSize: 16, fontWeight: '600', lineHeight: 22 },
-  abstract: { color: '#a8adb5', fontSize: 13, lineHeight: 19 },
-  components: { color: '#6f757d', fontSize: 10 },
+  cardMeta: {
+    color: '#8ab4f8',
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  cardTitle: { color: '#f0f0f0', fontSize: 15.5, fontWeight: '600', lineHeight: 21 },
+  cardAuthors: { color: '#9aa0a8', fontSize: 12 },
+  cardAbstract: { color: '#a8adb5', fontSize: 12.5, lineHeight: 18 },
 });
