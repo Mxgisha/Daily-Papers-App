@@ -24,7 +24,9 @@ import { READER_CSS } from '../../src/platform/readerCss.generated';
 const ARXIV_HTML = 'https://arxiv.org/html/';
 
 export default function ReaderScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id: string }>();
+  // Old-style ids arrive percent-encoded (math.GT%2F0309136) so the route stays one segment.
+  const id = decodeURIComponent(String(params.id ?? ''));
   const [failed, setFailed] = useState(false);
 
   const uri = `${ARXIV_HTML}${id}`;

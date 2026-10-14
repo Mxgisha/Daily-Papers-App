@@ -43,14 +43,23 @@ npx expo export --platform web --output-dir ../dist-web
 python3 harness/run_reader_mvp.py --web ../dist-web --out ../reports/reader-mvp
 ```
 
-Result on an emulated iPhone 14 viewport:
+Three cases, all on an emulated iPhone 14 viewport:
 
-| | |
+| Case | Result |
 |---|---|
-| List | 300 papers, filter input present, cards render with title/authors/abstract |
-| Reader | loaded `2610.13948`, iframe → reader proxy, title, byline and abstract all render |
+| List | 300 papers, filter input present, cards with id/category/date/title/authors/abstract |
+| Reader — paper from the list (`2610.13948`) | HTML full text: title, byline, abstract |
+| Reader — arbitrary id *not* in the list (`1706.03762`) | HTML full text renders |
+| Reader — old-style id with a slash, **no** HTML (`hep-th/9711200`) | PDF fallback shown |
 
-Screenshots: `reports/reader-mvp/01-list.png`, `reports/reader-mvp/02-reader.png`.
+Screenshots in `reports/reader-mvp/`: `01-list.png`, `02-reader-2610.13948.png`,
+`02-reader-1706.03762.png`, `02-reader-hep-th_9711200.png`.
+
+Three bugs only running it could find: the card did not display the arXiv id, so papers
+could not be referenced or opened by id; the SPA fallback 404'd on `/read/{id}` because I
+tested "looks like a static file" with "contains a dot" — and arXiv ids contain dots; and
+**old-style ids (`math.GT/0309136`) contain a slash**, so the route must percent-encode them
+or expo-router's `[id]` never matches.
 
 One wrinkle worth knowing: on **web** the reader loads through a same-origin proxy
 (`reader/server.py`) because a browser will not let you inject styles into a cross-origin

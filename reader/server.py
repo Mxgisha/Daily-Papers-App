@@ -81,8 +81,43 @@ class ReaderHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        # The client is served from a different port during verification, so a fetch that
+        # probes renderability is cross-origin. No credentials are involved -- this is a
+        # local development reader for public arXiv content.
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
         self.end_headers()
         self.wfile.write(data)
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        """Status only, no body.
+
+        The web reader probes this to decide whether a paper has HTML full text, so it can
+        show the PDF fallback instead of an iframe of arXiv's error page. Without it the
+        fallback would be unreachable on web.
+        """
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        m = re.match(r"^/(?:read|article)/(.+)$", path)
+        status = 200
+        if path != "/" and not m:
+            status = 404
+        elif m:
+            try:
+                fetch_article(self.client, m.group(1))
+            except NotRenderable:
+                status = 404
+        self.send_response(status)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)

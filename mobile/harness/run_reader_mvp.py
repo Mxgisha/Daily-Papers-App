@@ -21,6 +21,7 @@ import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import quote
 
 MOBILE = Path(__file__).resolve().parent.parent
 ROOT = MOBILE.parent
@@ -113,25 +114,32 @@ def main() -> int:
             report["paper"] = paper
 
             # ---- reader screen ----------------------------------------------
-            driver.get(f"{base}/read/{paper}")
+            # Old-style ids contain a slash; encode so the route is a single segment.
+            driver.get(f"{base}/read/{quote(paper, safe='')}")
             deadline = time.time() + args.timeout
             src = None
             while time.time() < deadline:
                 src = driver.js(
                     "var f = document.querySelector('iframe'); return f ? f.src : null;"
                 )
-                if src:
+                text = driver.js("return (document.body.innerText || '').slice(0, 300);") or ""
+                # Either branch counts: an iframe for HTML full text, or the PDF fallback
+                # for the ~4% of arXiv papers with no rendered HTML.
+                if src or "No HTML full text" in text:
                     break
                 time.sleep(0.5)
             # Let the iframe fetch and render the paper before the screenshot.
-            time.sleep(8)
+            time.sleep(8 if src else 2)
 
-            reader_path = out / "02-reader.png"
+            reader_path = out / f"02-reader-{paper.replace('/', '_')}.png"
             driver.screenshot(reader_path)
             report["reader"] = {
                 "url": f"{base}/read/{paper}",
                 "iframe_src": src,
                 "used_proxy": bool(src and str(PROXY_PORT) in src),
+                "pdf_fallback_shown": "No HTML full text" in text,
+                "body_text": text,
+                "screenshot": str(reader_path),
             }
     except DriverError as exc:
         print(f"driver failed: {exc}")
@@ -146,10 +154,16 @@ def main() -> int:
     print(json.loads(report["list"]) if isinstance(report.get("list"), str) else report["list"])
     print("\n=== reader screen ===")
     print(json.dumps(report["reader"], indent=2))
-    print(f"\nscreenshots: {out}/01-list.png, {out}/02-reader.png")
+    print(f"\nscreenshots: {out}/01-list.png, {report['reader']['screenshot']}")
 
-    ok = bool(report["reader"]["iframe_src"])
-    print("\nOK: reader rendered an iframe" if ok else "\nFAILED: no reader iframe")
+    fallback = report["reader"]["pdf_fallback_shown"]
+    ok = bool(report["reader"]["iframe_src"]) or fallback
+    if fallback:
+        print("\nOK: PDF fallback shown (paper has no HTML rendering on arXiv)")
+    elif ok:
+        print("\nOK: reader rendered the paper")
+    else:
+        print("\nFAILED: neither a reader iframe nor the PDF fallback appeared")
     return 0 if ok else 1
 
 

@@ -59,7 +59,9 @@ export default function PaperList() {
 
   const open = (id: string) => {
     Keyboard.dismiss();
-    router.push(`/read/${id}`);
+    // Old-style arXiv ids contain a slash (math.GT/0309136). Encoding keeps the route a
+    // single path segment so expo-router's [id] matches it.
+    router.push(`/read/${encodeURIComponent(id)}`);
   };
 
   return (
