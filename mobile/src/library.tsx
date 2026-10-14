@@ -11,12 +11,11 @@
  *    tab nothing to render without a network round trip.
  *  - **Reading positions** are stored as a fraction of the document *plus* an anchor: the
  *    index of the topmost visible block element. The fraction alone drifts whenever the
- *    document changes height — which lazy figures do constantly — so the anchor is what
- *    actually makes restore reliable.
- *  - **Known papers** caches metadata for anything that has been on screen. The reader can be
- *    opened cold, from a pasted id or the paper of the day, with no list entry behind it; it
- *    used to save such a paper with the arXiv id as its title, which is why saved search
- *    results showed up as "2610.14091".
+ *    document changes height — which lazy figures do constantly.
+ *  - **Known papers** caches metadata for anything that has been on screen, and `updateFavorite`
+ *    repairs saved entries whose metadata was not known at the moment they were saved. That
+ *    happens on a cold open, and when the star is tapped before the arXiv lookup returns.
+ *    Toggling such an entry would simply delete it, so it is healed in place instead.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -39,7 +38,7 @@ const KNOWN_KEY = 'dailypapers:known:v1';
 /** v1 stored a bare number; read for continuity, written to v2. */
 const POSITIONS_KEY_V1 = 'dailypapers:positions:v1';
 
-/** Bounds so none of these grow without limit on a device that is used for years. */
+/** Bounds so none of these grow without limit on a device used for years. */
 const MAX_POSITIONS = 500;
 const MAX_KNOWN = 400;
 
@@ -58,6 +57,11 @@ export interface ReadingSpot {
   fraction: number;
   /** Index into the document's block elements, or -1 when unknown. */
   anchor: number;
+}
+
+/** True when a saved entry is missing the metadata that makes it readable in a list. */
+export function needsRepair(paper: SavedPaper): boolean {
+  return paper.title.trim() === paper.id || paper.abstract.trim().length === 0;
 }
 
 async function readJson<T>(key: string, fallback: T): Promise<T> {
@@ -85,10 +89,7 @@ function normaliseSpot(value: unknown): ReadingSpot | null {
   if (value && typeof value === 'object') {
     const v = value as { fraction?: unknown; anchor?: unknown };
     if (typeof v.fraction === 'number' && Number.isFinite(v.fraction)) {
-      return {
-        fraction: v.fraction,
-        anchor: typeof v.anchor === 'number' ? v.anchor : -1,
-      };
+      return { fraction: v.fraction, anchor: typeof v.anchor === 'number' ? v.anchor : -1 };
     }
   }
   return null;
@@ -100,11 +101,13 @@ interface LibraryValue {
   favorites: SavedPaper[];
   isFavorite: (id: string) => boolean;
   toggleFavorite: (paper: Omit<SavedPaper, 'savedAt'>) => void;
+  /** Merge metadata into an existing saved entry. A repair path, not a feature. */
+  updateFavorite: (id: string, patch: Partial<Omit<SavedPaper, 'id' | 'savedAt'>>) => void;
   /** Where the reader was, or null if never opened. */
   positionFor: (id: string) => ReadingSpot | null;
   rememberPosition: (id: string, spot: ReadingSpot) => void;
   forgetPosition: (id: string) => void;
-  /** Cached metadata for anything that has been on screen, so a cold open still has a title. */
+  /** Cached metadata for anything that has been on screen. */
   paperMeta: (id: string) => PaperItem | null;
   rememberPaper: (paper: PaperItem) => void;
 }
@@ -114,6 +117,7 @@ const LibraryContext = createContext<LibraryValue>({
   favorites: [],
   isFavorite: () => false,
   toggleFavorite: () => {},
+  updateFavorite: () => {},
   positionFor: () => null,
   rememberPosition: () => {},
   forgetPosition: () => {},
@@ -157,6 +161,13 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Persisted by an effect rather than inside the state updater: a side effect in an updater
+  // runs twice under StrictMode and is a trap in general.
+  useEffect(() => {
+    if (!ready) return;
+    void writeJson(FAVORITES_KEY, favorites);
+  }, [favorites, ready]);
+
   const isFavorite = useCallback(
     (id: string) => favorites.some((f) => f.id === id),
     [favorites],
@@ -165,16 +176,35 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const toggleFavorite = useCallback((paper: Omit<SavedPaper, 'savedAt'>) => {
     setFavorites((current) => {
       const exists = current.some((f) => f.id === paper.id);
-      const next = exists
+      return exists
         ? current.filter((f) => f.id !== paper.id)
         : [{ ...paper, savedAt: Date.now() }, ...current];
-      void writeJson(FAVORITES_KEY, next);
-      return next;
     });
   }, []);
 
-  // Writes are debounced: the reader reports scroll continuously, and for the PDF renderer
-  // that means every page boundary too.
+  const updateFavorite = useCallback(
+    (id: string, patch: Partial<Omit<SavedPaper, 'id' | 'savedAt'>>) => {
+      setFavorites((current) => {
+        const index = current.findIndex((f) => f.id === id);
+        if (index === -1) return current;
+        const before = current[index];
+        const merged = { ...before, ...patch };
+        const unchanged =
+          merged.title === before.title &&
+          merged.abstract === before.abstract &&
+          merged.category === before.category &&
+          merged.authors.length === before.authors.length &&
+          merged.published === before.published;
+        if (unchanged) return current;
+        const next = [...current];
+        next[index] = merged;
+        return next;
+      });
+    },
+    [],
+  );
+
+  // Writes are debounced: the reader reports scroll continuously.
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scheduleFlush = useCallback(() => {
@@ -214,11 +244,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const positionFor = useCallback((id: string) => positions.current[id] ?? null, []);
 
-  // Persisted separately from positions and flushed immediately: this is what makes a title
-  // available the next time the same paper is opened cold.
+  // Written immediately rather than debounced: this is what makes a title available the next
+  // time the same paper is opened cold.
   const rememberPaper = useCallback((paper: PaperItem) => {
     const existing = known.current[paper.id];
-    if (existing && existing.title === paper.title && existing.category === paper.category) {
+    if (existing && existing.title === paper.title && existing.abstract === paper.abstract) {
       return;
     }
     known.current[paper.id] = paper;
@@ -244,6 +274,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       favorites,
       isFavorite,
       toggleFavorite,
+      updateFavorite,
       positionFor,
       rememberPosition,
       forgetPosition,
@@ -255,6 +286,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       favorites,
       isFavorite,
       toggleFavorite,
+      updateFavorite,
       positionFor,
       rememberPosition,
       forgetPosition,

@@ -117,6 +117,15 @@ export function pdfViewerHtml({ url, theme, start }: PdfViewerOptions): string {
     window.addEventListener(evt, function () { userMoved = true; }, { passive: true });
   });
 
+  // Called by the reader's header button. Clears the guard first: tapping the button is not
+  // the same as scrolling away.
+  window.__dpRestore = function () {
+    userMoved = false;
+    applyRestore();
+    post({ type: 'restored', ok: true });
+    return true;
+  };
+
   var lastSent = 0;
   function report() {
     var now = Date.now();

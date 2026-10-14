@@ -8,9 +8,14 @@
  *   PDF   when arXiv has no HTML rendering (~4% of papers), PDF.js draws the PDF in the
  *         WebView. No native module, so this keeps working in Expo Go.
  *
- * Both report position as a fraction *plus* an anchor, where the anchor is the index of the
- * topmost visible block. The fraction alone drifted whenever the document changed height —
- * which lazy figures do continuously — so the anchor is what makes restore reliable.
+ * Position is { fraction, anchor }: how far through the document, plus the index of the
+ * topmost visible block (or page, for a PDF). The fraction alone drifts because lazy figures
+ * keep growing the document after load.
+ *
+ * Restore happens two ways. Automatically, best-effort, on open — the script retries until
+ * the page stops growing rather than for a fixed count, because it runs before the document
+ * exists. And explicitly, from the button in the header, which asks the already-loaded page
+ * to scroll and is the dependable path.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -20,31 +25,20 @@ import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 import { fetchArxivById } from '../../src/arxiv';
 import { ThemeToggle } from '../../src/components/ThemeToggle';
-import { useLibrary, type ReadingSpot } from '../../src/library';
+import { needsRepair, useLibrary, type ReadingSpot } from '../../src/library';
 import { pdfViewerHtml } from '../../src/pdfViewer';
 import { READER_CSS } from '../../src/platform/readerCss.generated';
+import { RESTORE_JS, buildReaderScript } from '../../src/readerScript';
 import { useTheme, type Palette } from '../../src/theme';
 import type { PaperItem } from '../../src/types';
 
 const ARXIV_HTML = 'https://arxiv.org/html/';
 const ARXIV_PDF = 'https://arxiv.org/pdf/';
 
-/**
- * Block-level elements used for anchoring. Deliberately generous: a paper that uses a
- * structure we did not list should still anchor to something, and an index into a longer
- * list is no less stable than an index into a shorter one.
- */
-const BLOCK_SELECTOR = [
-  'article p',
-  'article h2',
-  'article h3',
-  'article h4',
-  'article figure',
-  'article table',
-  'article section',
-  'article li',
-  'article .ltx_para',
-].join(', ');
+/** A position at the very top is not somewhere to go back to. */
+function isUsableSpot(s: ReadingSpot | null): boolean {
+  return !!s && (s.anchor >= 0 || s.fraction > 0.005);
+}
 
 export default function ReaderScreen() {
   const params = useLocalSearchParams<{ id: string }>();
@@ -53,28 +47,44 @@ export default function ReaderScreen() {
   const { theme, palette } = useTheme();
   const {
     ready,
+    favorites,
     positionFor,
     rememberPosition,
     rememberPaper,
     paperMeta,
+    updateFavorite,
     isFavorite,
     toggleFavorite,
   } = useLibrary();
 
+  const webviewRef = useRef<WebView>(null);
   const [renderer, setRenderer] = useState<'html' | 'pdf'>('html');
-  const [spot, setSpot] = useState<ReadingSpot | null>(null);
+
+  /**
+   * The position the WebView was created with.
+   *
+   * Deliberately NOT updated as the reader scrolls: it is part of the WebView's `key`, so
+   * changing it would remount the page mid-read and throw the reader back to the top every
+   * time a position was reported.
+   */
+  const [initialSpot, setInitialSpot] = useState<ReadingSpot | null>(null);
+  /** Whether there is somewhere to return to, for the header button. Updated freely. */
+  const [hasSpot, setHasSpot] = useState(false);
+
   const [meta, setMeta] = useState<PaperItem | null>(null);
 
   const startedRef = useRef(false);
   useEffect(() => {
     if (!ready || startedRef.current) return;
     startedRef.current = true;
-    setSpot(positionFor(id));
+    const stored = positionFor(id);
+    setInitialSpot(stored);
+    setHasSpot(isUsableSpot(stored));
     setMeta(paperMeta(id));
   }, [ready, id, positionFor, paperMeta]);
 
   // If the paper has never been on screen there is no cached title — a cold open from a
-  // pasted id, a link, or the paper of the day. Ask arXiv once so the header and the saved
+  // pasted id, a link, or the paper of the day. Ask arXiv once so the header and any saved
   // entry show a real name rather than "2610.14091".
   useEffect(() => {
     if (!ready || meta) return;
@@ -98,6 +108,20 @@ export default function ReaderScreen() {
   }, [ready, id, meta, rememberPaper]);
 
   const saved = isFavorite(id);
+  const entry = favorites.find((f) => f.id === id);
+
+  // Repair a saved entry whose metadata was not known when it was saved. Without this the
+  // paper stays in the Saved tab as a bare id, and toggling it would simply delete it.
+  useEffect(() => {
+    if (!meta || !entry || !needsRepair(entry)) return;
+    updateFavorite(id, {
+      title: meta.title,
+      abstract: meta.abstract,
+      category: meta.category,
+      authors: meta.authors,
+      published: meta.published,
+    });
+  }, [meta, entry, id, updateFavorite]);
 
   const onMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -108,10 +132,11 @@ export default function ReaderScreen() {
           anchor?: number;
         };
         if (msg.type === 'position' && typeof msg.fraction === 'number') {
-          rememberPosition(id, {
-            fraction: msg.fraction,
-            anchor: typeof msg.anchor === 'number' ? msg.anchor : -1,
-          });
+          const next = { fraction: msg.fraction, anchor: msg.anchor ?? -1 };
+          rememberPosition(id, next);
+          // Only the button's enabled state changes. `initialSpot` must not, or the WebView
+          // remounts on every scroll report.
+          setHasSpot(isUsableSpot(next));
         }
       } catch {
         // A malformed message from the page is not worth interrupting reading for.
@@ -120,99 +145,16 @@ export default function ReaderScreen() {
     [id, rememberPosition],
   );
 
-  const injected = useMemo(() => {
-    const startFraction = spot?.fraction ?? 0;
-    const startAnchor = spot?.anchor ?? -1;
-    return `
-      (function () {
-        var css = ${JSON.stringify(READER_CSS)};
-        var theme = ${JSON.stringify(theme)};
-        var startFraction = ${startFraction};
-        var startAnchor = ${startAnchor};
-        var BLOCK_SELECTOR = ${JSON.stringify(BLOCK_SELECTOR)};
-
-        function apply() {
-          document.documentElement.setAttribute('data-theme', theme);
-          var s = document.getElementById('__reader_css');
-          if (!s) {
-            s = document.createElement('style');
-            s.id = '__reader_css';
-            (document.head || document.documentElement).appendChild(s);
-          }
-          s.textContent = css;
-        }
-        apply();
-        document.addEventListener('DOMContentLoaded', apply);
-
-        function post(m) {
-          if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(m));
-        }
-        function span() { return document.documentElement.scrollHeight - window.innerHeight; }
-        function blocks() { return document.querySelectorAll(BLOCK_SELECTOR); }
-
-        function currentAnchor() {
-          var nodes = blocks();
-          for (var i = 0; i < nodes.length; i++) {
-            if (nodes[i].getBoundingClientRect().bottom > 8) return i;
-          }
-          return -1;
-        }
-
-        function applyRestore() {
-          var nodes = blocks();
-          if (startAnchor >= 0 && nodes[startAnchor]) {
-            nodes[startAnchor].scrollIntoView({ block: 'start' });
-            return;
-          }
-          var sp = span();
-          if (startFraction > 0 && sp > 0) window.scrollTo(0, startFraction * sp);
-        }
-
-        // Restore repeatedly while the document settles. Lazy figures keep changing the
-        // height long after load, so a single restored position drifts — which is why it
-        // used to work sometimes and land in the wrong place other times. Stops as soon as
-        // the reader touches the page.
-        var userMoved = false;
-        ['touchstart', 'wheel', 'keydown'].forEach(function (evt) {
-          window.addEventListener(evt, function () { userMoved = true; }, { passive: true });
-        });
-
-        if (startAnchor >= 0 || startFraction > 0) {
-          var tries = 0;
-          (function settle() {
-            if (userMoved || tries++ > 14) return;
-            applyRestore();
-            setTimeout(settle, 350);
-          })();
-        }
-
-        var last = 0;
-        window.addEventListener('scroll', function () {
-          var now = Date.now();
-          if (now - last < 600) return;
-          last = now;
-          var sp = span();
-          post({
-            type: 'position',
-            fraction: sp > 0 ? window.scrollY / sp : 0,
-            anchor: currentAnchor()
-          });
-        }, { passive: true });
-
-        true;
-      })();
-    `;
-  }, [theme, spot]);
+  // The script is a module so it can be exercised against real arXiv HTML in a browser;
+  // see mobile/harness/check_restore.py.
+  const injected = useMemo(
+    () => buildReaderScript({ css: READER_CSS, theme, spot: initialSpot }),
+    [theme, initialSpot],
+  );
 
   const pdfSource = useMemo(
-    () => ({
-      html: pdfViewerHtml({
-        url: `${ARXIV_PDF}${id}`,
-        theme,
-        start: spot,
-      }),
-    }),
-    [id, theme, spot],
+    () => ({ html: pdfViewerHtml({ url: `${ARXIV_PDF}${id}`, theme, start: initialSpot }) }),
+    [id, theme, initialSpot],
   );
 
   const htmlSource = useMemo(() => ({ uri: `${ARXIV_HTML}${id}` }), [id]);
@@ -227,10 +169,9 @@ export default function ReaderScreen() {
     );
   }
 
-  // Long titles are unreadable in a nav bar; the header is a reminder, not the record.
   const headerTitle = meta?.title
-    ? meta.title.length > 34
-      ? `${meta.title.slice(0, 33)}…`
+    ? meta.title.length > 30
+      ? `${meta.title.slice(0, 29)}…`
       : meta.title
     : 'Reading';
 
@@ -242,11 +183,25 @@ export default function ReaderScreen() {
           headerRight: () => (
             <View style={styles.headerRight}>
               <Pressable
+                onPress={() => webviewRef.current?.injectJavaScript(RESTORE_JS)}
+                disabled={!hasSpot}
+                testID="reader-restore"
+                accessibilityRole="button"
+                accessibilityLabel={
+                  hasSpot ? 'Return to where you stopped reading' : 'No saved position yet'
+                }
+                hitSlop={12}
+                style={styles.headerButton}
+              >
+                <Text style={[styles.glyph, hasSpot && styles.glyphOn]}>⟲</Text>
+              </Pressable>
+
+              <Pressable
                 onPress={() =>
                   toggleFavorite({
                     id,
                     // Real metadata when we have it. The id is only ever a last resort, and
-                    // when we fall back to it the title is at least honest about being one.
+                    // the Saved tab repairs the entry once the lookup returns.
                     title: meta?.title ?? id,
                     category: meta?.category ?? '',
                     published: meta?.published ?? null,
@@ -260,8 +215,11 @@ export default function ReaderScreen() {
                 hitSlop={12}
                 style={styles.headerButton}
               >
-                <Text style={[styles.star, saved && styles.starOn]}>{saved ? '★' : '☆'}</Text>
+                <Text style={[styles.glyph, saved && styles.glyphOn]}>
+                  {saved ? '★' : '☆'}
+                </Text>
               </Pressable>
+
               <ThemeToggle />
             </View>
           ),
@@ -270,8 +228,9 @@ export default function ReaderScreen() {
 
       {renderer === 'html' ? (
         <WebView
-          // Remount on theme or start change so the injection re-runs.
-          key={`html-${theme}-${spot?.anchor ?? 'n'}-${spot ? Math.round(spot.fraction * 1000) : 'n'}`}
+          ref={webviewRef}
+          // Remount on theme or the initial position only — never on scroll.
+          key={`html-${theme}-${initialSpot?.anchor ?? 'n'}-${initialSpot ? Math.round(initialSpot.fraction * 1000) : 'n'}`}
           source={htmlSource}
           injectedJavaScriptBeforeContentLoaded={injected}
           originWhitelist={['*']}
@@ -295,6 +254,7 @@ export default function ReaderScreen() {
         />
       ) : (
         <WebView
+          ref={webviewRef}
           key={`pdf-${theme}`}
           source={pdfSource}
           originWhitelist={['*']}
@@ -333,6 +293,6 @@ const makeStyles = (p: Palette) =>
     },
     headerRight: { flexDirection: 'row', alignItems: 'center' },
     headerButton: { paddingHorizontal: 6, paddingVertical: 4 },
-    star: { fontSize: 20, color: p.dim },
-    starOn: { color: p.accent },
+    glyph: { fontSize: 20, color: p.dim },
+    glyphOn: { color: p.accent },
   });
