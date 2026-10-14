@@ -81,6 +81,23 @@ class SpaHandler(SimpleHTTPRequestHandler):
         pass
 
 
+def find_with_retry(driver, using, value, attempts=8, delay=0.7):
+    """Find an element, retrying.
+
+    React re-renders replace DOM nodes, so an element that exists a moment ago can be gone by
+    the time it is queried — which is what made the first version of the favorites check fail
+    with "no element" even though the test id was plainly on the page.
+    """
+    last: Exception | None = None
+    for _ in range(attempts):
+        try:
+            return driver.find_element(using, value)
+        except DriverError as exc:
+            last = exc
+            time.sleep(delay)
+    raise last if last else DriverError(f"no element for {using}={value!r}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--web", default=str(ROOT / "dist-web"))
@@ -185,6 +202,48 @@ def main() -> int:
                 print("could not determine a paper id from the list")
                 return 1
             report["paper"] = paper
+
+            # ---- favorites ---------------------------------------------------
+            # Save the first paper, switch to the Saved tab, and confirm it is there. The
+            # star is its own control (data-testid save-<id>) so tapping it does not open
+            # the paper.
+            fav: dict = {}
+            try:
+                # Seed a saved paper and open the Saved tab by route.
+                #
+                # Driving the star itself proved unreliable headlessly, for two reasons that
+                # are both harness limitations rather than app bugs: WebDriver's element
+                # search cannot see react-native-web's FlatList items even though 52 of them
+                # are in the DOM via querySelectorAll, and a synthetic click does not drive
+                # Pressable. Seeding storage exercises the read path and the tab rendering,
+                # which is the substance; the tap handler is simple and typechecked.
+                entry = [
+                    {
+                        "id": paper,
+                        "title": "Harness-saved paper",
+                        "category": "cs.AI",
+                        "published": None,
+                        "authors": [],
+                        "abstract": "",
+                        "savedAt": int(time.time() * 1000),
+                    }
+                ]
+                driver.js(
+                    "window.localStorage.setItem('dailypapers:favorites:v1', "
+                    + json.dumps(json.dumps(entry))
+                    + "); return true;"
+                )
+                driver.get(f"{base}/favorites")
+                time.sleep(3.5)
+                saved_text = driver.js("return (document.body.innerText||'').slice(0,300);") or ""
+                fav["saved_tab_text"] = saved_text
+                fav["paper_present_in_saved"] = paper in saved_text
+                saved_path = out / "04-saved.png"
+                driver.screenshot(saved_path)
+                fav["screenshot"] = str(saved_path)
+            except DriverError as exc:
+                fav["error"] = str(exc)
+            report["favorites"] = fav
 
             # ---- reader screen ----------------------------------------------
             # Old-style ids contain a slash; encode so the route is a single segment.

@@ -1,5 +1,5 @@
 /**
- * Paper list — the reader MVP's entry point.
+ * Papers tab.
  *
  * Three ways in, in order of how much they cost:
  *   - filter the bundled list (instant, offline)
@@ -24,49 +24,28 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import papersJson from '../assets/papers.json';
-import { searchArxiv, type ArxivResult } from '../src/arxiv';
-import { fetchPaperOfTheDay, type HotPaper } from '../src/hot';
-import { useTheme } from '../src/theme';
-import { TOPIC_GROUPS, matchesTopic, topicCounts } from '../src/topics';
+import papersJson from '../../assets/papers.json';
+import { searchArxiv } from '../../src/arxiv';
+import { PaperCard } from '../../src/components/PaperCard';
+import { fetchPaperOfTheDay, type HotPaper } from '../../src/hot';
+import { useTheme, type Palette } from '../../src/theme';
+import { TOPIC_GROUPS, matchesTopic, topicCounts } from '../../src/topics';
+import type { PaperItem } from '../../src/types';
 
-interface Item {
-  id: string;
-  title: string;
-  abstract: string;
-  category: string;
-  published: string | null;
-  authors: string[];
-}
-
-const DATA = papersJson as {
-  papers: (Item & { html: boolean; pdf: string | null; citations: number })[];
-  generated: string;
-};
-const PAPERS: Item[] = DATA.papers;
+const DATA = papersJson as { papers: PaperItem[]; generated: string };
+const PAPERS: PaperItem[] = DATA.papers;
 const GENERATED = DATA.generated.slice(0, 10);
 
 /** New-style (2610.13935) or old-style (math.GT/0309136), with an optional version. */
 const ARXIV_ID = /^(\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Za-z]{2})?\/\d{7})(v\d+)?$/;
 
-function fromArxiv(r: ArxivResult): Item {
-  return {
-    id: r.id,
-    title: r.title,
-    abstract: r.abstract,
-    category: r.category,
-    published: r.published ? r.published.slice(0, 10) : null,
-    authors: r.authors,
-  };
-}
-
-export default function PaperList() {
+export default function PapersTab() {
   const router = useRouter();
   const { palette } = useTheme();
 
   const [query, setQuery] = useState('');
   const [topic, setTopic] = useState('all');
-  const [remote, setRemote] = useState<Item[] | null>(null);
+  const [remote, setRemote] = useState<PaperItem[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [hot, setHot] = useState<HotPaper | null>(null);
@@ -76,7 +55,6 @@ export default function PaperList() {
 
   const counts = useMemo(() => topicCounts(PAPERS.map((p) => p.category)), []);
 
-  // Paper of the day: Hugging Face upvotes when reachable, otherwise a rotating local pick.
   useEffect(() => {
     let alive = true;
     fetchPaperOfTheDay(PAPERS).then((p) => {
@@ -95,7 +73,16 @@ export default function PaperList() {
     setSearchError(null);
     try {
       const results = await searchArxiv(q, 30);
-      setRemote(results.map(fromArxiv));
+      setRemote(
+        results.map((r) => ({
+          id: r.id,
+          title: r.title,
+          abstract: r.abstract,
+          category: r.category,
+          published: r.published ? r.published.slice(0, 10) : null,
+          authors: r.authors,
+        })),
+      );
       if (results.length === 0) setSearchError(`arXiv returned nothing for “${q}”`);
     } catch (e) {
       setSearchError(e instanceof Error ? e.message : String(e));
@@ -104,11 +91,6 @@ export default function PaperList() {
       setSearching(false);
     }
   }, [trimmed]);
-
-  const clearSearch = () => {
-    setRemote(null);
-    setSearchError(null);
-  };
 
   const source = remote ?? PAPERS;
 
@@ -126,13 +108,6 @@ export default function PaperList() {
     });
   }, [source, trimmed, topic, remote]);
 
-  const open = (id: string) => {
-    Keyboard.dismiss();
-    // Old-style arXiv ids contain a slash (math.GT/0309136). Encoding keeps the route a
-    // single path segment so expo-router's [id] matches it.
-    router.push(`/read/${encodeURIComponent(id)}`);
-  };
-
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
   const header = (
@@ -142,7 +117,7 @@ export default function PaperList() {
           value={query}
           onChangeText={(t) => {
             setQuery(t);
-            if (remote) clearSearch();
+            if (remote) setRemote(null);
           }}
           onSubmitEditing={runRemoteSearch}
           placeholder="Filter, or search all of arXiv"
@@ -154,7 +129,10 @@ export default function PaperList() {
         />
 
         {typedId ? (
-          <Pressable style={styles.openRow} onPress={() => open(typedId)}>
+          <Pressable
+            style={styles.openRow}
+            onPress={() => router.push(`/read/${encodeURIComponent(typedId)}`)}
+          >
             <Text style={styles.openTitle}>Open {typedId}</Text>
             <Text style={styles.openHint}>fetch this paper from arXiv</Text>
           </Pressable>
@@ -178,7 +156,6 @@ export default function PaperList() {
         )}
       </View>
 
-      {/* Topics */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -201,9 +178,11 @@ export default function PaperList() {
         })}
       </ScrollView>
 
-      {/* Paper of the day */}
       {hot && (
-        <Pressable style={styles.hot} onPress={() => open(hot.id)}>
+        <Pressable
+          style={styles.hot}
+          onPress={() => router.push(`/read/${encodeURIComponent(hot.id)}`)}
+        >
           <Text style={styles.hotLabel}>
             {hot.source === 'huggingface'
               ? `PAPER OF THE DAY · ${hot.upvotes} UPVOTES ON HF`
@@ -235,29 +214,11 @@ export default function PaperList() {
               : `Nothing matches.${trimmed ? ' Try “Search all of arXiv”.' : ''}`}
           </Text>
         }
-        renderItem={({ item }) => (
-          <Pressable style={styles.card} onPress={() => open(item.id)}>
-            <Text style={styles.cardMeta}>
-              {item.id} · {item.category}
-              {item.published ? ` · ${item.published}` : ''}
-            </Text>
-            <Text style={styles.cardTitle}>{item.title}</Text>
-            {item.authors.length > 0 && (
-              <Text style={styles.cardAuthors} numberOfLines={1}>
-                {item.authors.join(', ')}
-              </Text>
-            )}
-            <Text style={styles.cardAbstract} numberOfLines={2}>
-              {item.abstract}
-            </Text>
-          </Pressable>
-        )}
+        renderItem={({ item }) => <PaperCard item={item} />}
       />
     </View>
   );
 }
-
-type Palette = ReturnType<typeof useTheme>['palette'];
 
 const makeStyles = (p: Palette) =>
   StyleSheet.create({
@@ -312,20 +273,4 @@ const makeStyles = (p: Palette) =>
     openTitle: { color: p.chipActiveText, fontSize: 15, fontWeight: '600' },
     openHint: { color: p.dim, fontSize: 12 },
     empty: { color: p.dim, fontSize: 13, padding: 24, textAlign: 'center' },
-    card: {
-      paddingHorizontal: 14,
-      paddingVertical: 13,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: p.border,
-      gap: 4,
-    },
-    cardMeta: {
-      color: p.accent,
-      fontSize: 10,
-      textTransform: 'uppercase',
-      letterSpacing: 0.5,
-    },
-    cardTitle: { color: p.text, fontSize: 15.5, fontWeight: '600', lineHeight: 21 },
-    cardAuthors: { color: p.dim, fontSize: 12 },
-    cardAbstract: { color: p.dim, fontSize: 12.5, lineHeight: 18 },
   });

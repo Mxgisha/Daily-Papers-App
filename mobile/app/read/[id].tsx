@@ -1,57 +1,76 @@
 /**
- * Reader screen: arXiv HTML full text, reflowed for a phone.
+ * Reader screen.
  *
- * The WebView loads arXiv's HTML directly rather than fetching it in JS and injecting the
- * markup. Two reasons: fetching cross-origin from the app would hit CORS, and top-level
- * navigation in a WebView does not. Relative figure URLs also keep resolving against
- * arxiv.org without needing a <base> tag.
+ * Two renderers behind one screen:
  *
- * A WebView here is a deliberate, narrow choice — one screen, not the whole app. The markup
- * is deeply nested HTML with tables and native MathML, and parsing that into React Native
- * components would be a large amount of work with no good answer for math.
+ *   HTML  arXiv's own full text in a WebView, with the reader stylesheet injected before
+ *         first paint so its desktop CSS never flashes.
+ *   PDF   when arXiv has no HTML rendering (~4% of papers), PDF.js draws the PDF in the
+ *         WebView. No native module, so this keeps working in Expo Go. This replaced a
+ *         dead-end screen that handed off to the OS viewer.
  *
- * The stylesheet is generated from reader/static/reader.css and verified against a real
- * 390x844 viewport: zero page-level horizontal overflow across six papers from six
- * categories.
+ * Both renderers report scroll position as a fraction of the document, so reading-position
+ * memory is one mechanism rather than two.
  */
 
-import { useLocalSearchParams } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
+import { ThemeToggle } from '../../src/components/ThemeToggle';
+import { useLibrary } from '../../src/library';
+import { pdfViewerHtml } from '../../src/pdfViewer';
 import { READER_CSS } from '../../src/platform/readerCss.generated';
-import { useTheme } from '../../src/theme';
+import { useTheme, type Palette } from '../../src/theme';
 
 const ARXIV_HTML = 'https://arxiv.org/html/';
+const ARXIV_PDF = 'https://arxiv.org/pdf/';
 
 export default function ReaderScreen() {
   const params = useLocalSearchParams<{ id: string }>();
   // Old-style ids arrive percent-encoded (math.GT%2F0309136) so the route stays one segment.
   const id = decodeURIComponent(String(params.id ?? ''));
-  const [failed, setFailed] = useState(false);
   const { theme, palette } = useTheme();
+  const { ready, positionFor, rememberPosition, isFavorite, toggleFavorite } = useLibrary();
 
-  const uri = `${ARXIV_HTML}${id}`;
-  const pdfUri = `https://arxiv.org/pdf/${id}`;
+  // 'html' until arXiv says otherwise; then 'pdf' for the rest of the session.
+  const [renderer, setRenderer] = useState<'html' | 'pdf'>('html');
+  // Read once, when storage is available. The WebView is keyed on it so the injected script
+  // knows the target rather than being told after the fact.
+  const [startFraction, setStartFraction] = useState<number | null>(null);
 
-  /**
-   * Applied before first paint so arXiv's own desktop CSS never flashes. `document.head`
-   * may not exist yet at this point, hence the documentElement fallback.
-   *
-   * The theme is set explicitly as `data-theme`. The stylesheet no longer contains a
-   * `prefers-color-scheme` rule, deliberately: following the system meant the article could
-   * render dark inside a light app (or the reverse), and there was no way for the user to
-   * override it.
-   */
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (!ready || startedRef.current) return;
+    startedRef.current = true;
+    setStartFraction(positionFor(id));
+  }, [ready, id, positionFor]);
+
+  const saved = isFavorite(id);
+
+  const onMessage = useCallback(
+    (event: WebViewMessageEvent) => {
+      try {
+        const msg = JSON.parse(event.nativeEvent.data) as { type: string; fraction?: number };
+        if (msg.type === 'position' && typeof msg.fraction === 'number') {
+          rememberPosition(id, msg.fraction);
+        }
+      } catch {
+        // A malformed message from the page is not worth interrupting reading for.
+      }
+    },
+    [id, rememberPosition],
+  );
+
   const injected = useMemo(
     () => `
       (function () {
         var css = ${JSON.stringify(READER_CSS)};
         var theme = ${JSON.stringify(theme)};
+        var start = ${typeof startFraction === 'number' ? startFraction : 0};
         function apply() {
           document.documentElement.setAttribute('data-theme', theme);
-
           var s = document.getElementById('__reader_css');
           if (!s) {
             s = document.createElement('style');
@@ -62,92 +81,148 @@ export default function ReaderScreen() {
         }
         apply();
         document.addEventListener('DOMContentLoaded', apply);
+
+        function post(m) {
+          if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(m));
+        }
+        function span() { return document.documentElement.scrollHeight - window.innerHeight; }
+        function restore() { if (start > 0 && span() > 0) window.scrollTo(0, start * span()); }
+
+        // Twice: once as soon as layout exists, once after lazy figures have settled and the
+        // document has grown — which is what actually makes the target land correctly.
+        if (start > 0) { setTimeout(restore, 350); setTimeout(restore, 1800); }
+
+        var last = 0;
+        window.addEventListener('scroll', function () {
+          var now = Date.now();
+          if (now - last < 500) return;
+          last = now;
+          post({ type: 'position', fraction: span() > 0 ? window.scrollY / span() : 0 });
+        }, { passive: true });
+
         true;
       })();
     `,
-    [theme],
+    [theme, startFraction],
   );
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        screen: { flex: 1, backgroundColor: palette.bg },
-        webview: { flex: 1, backgroundColor: palette.bg },
-        loading: {
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        fallback: {
-          flex: 1,
-          backgroundColor: palette.bg,
-          padding: 24,
-          gap: 12,
-          justifyContent: 'center',
-        },
-        fallbackTitle: { color: palette.text, fontSize: 20, fontWeight: '600' },
-        fallbackBody: { color: palette.dim, fontSize: 14, lineHeight: 20 },
-        button: {
-          alignSelf: 'flex-start',
-          marginTop: 8,
-          paddingHorizontal: 16,
-          paddingVertical: 10,
-          borderRadius: 8,
-          borderWidth: 1,
-          borderColor: palette.border,
-        },
-        buttonText: { color: palette.accent, fontSize: 14 },
-      }),
-    [palette],
+  const pdfSource = useMemo(
+    () => ({
+      html: pdfViewerHtml({ url: `${ARXIV_PDF}${id}`, theme, startFraction }),
+    }),
+    [id, theme, startFraction],
   );
 
-  if (failed) {
-    // ~4% of arXiv papers have no HTML rendering and need the PDF fallback.
+  const htmlSource = useMemo(() => ({ uri: `${ARXIV_HTML}${id}` }), [id]);
+  const styles = useMemo(() => makeStyles(palette), [palette]);
+
+  // Wait for storage so the first paint already knows where to scroll.
+  if (!ready) {
     return (
-      <View style={styles.fallback}>
-        <Text style={styles.fallbackTitle}>No HTML full text</Text>
-        <Text style={styles.fallbackBody}>
-          {id} has no rendered HTML on arXiv. This is the ~4% of papers that need the PDF
-          fallback.
-        </Text>
-        <Pressable style={styles.button} onPress={() => void Linking.openURL(pdfUri)}>
-          <Text style={styles.buttonText}>Open PDF</Text>
-        </Pressable>
+      <View style={styles.loading}>
+        <ActivityIndicator color={palette.accent} />
       </View>
     );
   }
 
   return (
     <View style={styles.screen}>
-      <WebView
-        // Remounting on a theme change is what re-runs the injection; the WebView caches
-        // the page otherwise and the article would keep the old colours.
-        key={theme}
-        source={{ uri }}
-        injectedJavaScriptBeforeContentLoaded={injected}
-        originWhitelist={['*']}
-        startInLoadingState
-        setSupportMultipleWindows={false}
-        // Overflow is handled in CSS, but these stop the platform adding its own sideways
-        // rubber-banding on top of it.
-        scrollEnabled
-        bounces={false}
-        overScrollMode="never"
-        onError={() => setFailed(true)}
-        onHttpError={(event) => {
-          if (event.nativeEvent.statusCode >= 400) setFailed(true);
+      <Stack.Screen
+        options={{
+          headerRight: () => (
+            <View style={styles.headerRight}>
+              <Pressable
+                onPress={() =>
+                  toggleFavorite({
+                    id,
+                    // The reader can be opened cold from a link, in which case the title is
+                    // not known and the id stands in rather than saving a blank row.
+                    title: id,
+                    category: '',
+                    published: null,
+                    authors: [],
+                    abstract: '',
+                  })
+                }
+                testID="reader-save"
+                accessibilityRole="button"
+                accessibilityLabel={saved ? 'Remove from favorites' : 'Save to favorites'}
+                hitSlop={12}
+                style={styles.headerButton}
+              >
+                <Text style={[styles.star, saved && styles.starOn]}>{saved ? '★' : '☆'}</Text>
+              </Pressable>
+              <ThemeToggle />
+            </View>
+          ),
         }}
-        renderLoading={() => (
-          <View style={styles.loading}>
-            <ActivityIndicator color={palette.accent} />
-          </View>
-        )}
-        style={styles.webview}
       />
+
+      {renderer === 'html' ? (
+        <WebView
+          // Remount on theme or start change so the injection re-runs.
+          key={`html-${theme}-${startFraction ?? 'none'}`}
+          source={htmlSource}
+          injectedJavaScriptBeforeContentLoaded={injected}
+          originWhitelist={['*']}
+          startInLoadingState
+          setSupportMultipleWindows={false}
+          scrollEnabled
+          bounces={false}
+          overScrollMode="never"
+          onMessage={onMessage}
+          // A 404 means arXiv has no HTML for this paper: that is the PDF case.
+          onHttpError={(event) => {
+            if (event.nativeEvent.statusCode >= 400) setRenderer('pdf');
+          }}
+          onError={() => setRenderer('pdf')}
+          renderLoading={() => (
+            <View style={styles.loading}>
+              <ActivityIndicator color={palette.accent} />
+            </View>
+          )}
+          style={styles.webview}
+        />
+      ) : (
+        <WebView
+          key={`pdf-${theme}`}
+          source={pdfSource}
+          originWhitelist={['*']}
+          startInLoadingState
+          setSupportMultipleWindows={false}
+          scrollEnabled
+          bounces={false}
+          overScrollMode="never"
+          onMessage={onMessage}
+          javaScriptEnabled
+          renderLoading={() => (
+            <View style={styles.loading}>
+              <ActivityIndicator color={palette.accent} />
+            </View>
+          )}
+          style={styles.webview}
+        />
+      )}
     </View>
   );
 }
+
+const makeStyles = (p: Palette) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: p.bg },
+    webview: { flex: 1, backgroundColor: p.bg },
+    loading: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: p.bg,
+    },
+    headerRight: { flexDirection: 'row', alignItems: 'center' },
+    headerButton: { paddingHorizontal: 6, paddingVertical: 4 },
+    star: { fontSize: 20, color: p.dim },
+    starOn: { color: p.accent },
+  });

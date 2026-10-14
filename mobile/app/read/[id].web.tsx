@@ -73,29 +73,25 @@ export default function ReaderWeb() {
   }
 
   if (status === 'unavailable') {
+    // Browsers render PDFs natively, so web embeds the file directly and needs no PDF.js.
+    // Native has no such luxury, which is why src/pdfViewer.ts exists.
     return (
-      <div style={shell}>
-        <h1 style={{ fontSize: 20, margin: 0 }}>No HTML full text</h1>
-        <p style={{ margin: 0, color: '#a8adb5' }}>
-          {id} has no rendered HTML on arXiv. This is the ~4% of papers that need the PDF
-          fallback.
-        </p>
-        <a
-          href={pdf}
-          target="_blank"
-          rel="noreferrer"
+      <div style={{ ...shell, padding: 0, gap: 0 }}>
+        <div
           style={{
-            alignSelf: 'flex-start',
-            marginTop: 6,
-            padding: '10px 16px',
-            border: '1px solid #3a3f47',
-            borderRadius: 8,
-            color: '#8ab4f8',
-            textDecoration: 'none',
+            padding: '8px 14px',
+            fontSize: 11,
+            color: palette.dim,
+            borderBottom: `1px solid ${palette.border}`,
           }}
         >
-          Open PDF
-        </a>
+          No HTML full text — showing the PDF
+        </div>
+        <iframe
+          src={pdf}
+          title={`arXiv PDF ${id}`}
+          style={{ flex: 1, width: '100%', border: 0, backgroundColor: palette.bg }}
+        />
       </div>
     );
   }
