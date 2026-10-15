@@ -8,7 +8,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test": "node --import tsx --test tests/feed.test.ts",
+    "test": "node --import tsx --test tests/feed.test.ts tests/integrity.test.ts tests/architecture.test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "gen:reader-css": "node scripts/gen-reader-css.mjs",
     "fixtures": "../.venv/bin/python tests/make_fixtures.py --bundle ../dist --out tests/fixtures",

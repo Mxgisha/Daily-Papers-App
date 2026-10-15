@@ -55,6 +55,33 @@ export function themeJs(theme: 'light' | 'dark'): string {
   return `if (window.__dpTheme) { window.__dpTheme(${JSON.stringify(theme)}); } true;`;
 }
 
+/**
+ * Re-apply the stylesheet and theme to an already-loaded page.
+ *
+ * Passed as `injectedJavaScript` alongside the before-content-load script, as a backstop.
+ * `injectedJavaScriptBeforeContentLoaded` is the right place for the stylesheet — it runs
+ * before arXiv's own CSS paints, so the desktop layout never flashes — but it does not fire
+ * reliably on every load on every WebView. When it silently does not, arXiv's own stylesheets
+ * win outright: its dark site header and its icon-only toolbar reappear above the app's
+ * header, which reads as two navigation bars, and the page regains a horizontal scroll.
+ *
+ * That is the "it happens on some papers" report. This runs after the document loads and is
+ * idempotent, so a missed stylesheet is corrected rather than left on screen.
+ */
+export function ensureReaderCssJs(css: string, theme: 'light' | 'dark'): string {
+  return `
+    var __dpStyle = document.getElementById('__reader_css');
+    if (!__dpStyle) {
+      __dpStyle = document.createElement('style');
+      __dpStyle.id = '__reader_css';
+      (document.head || document.documentElement).appendChild(__dpStyle);
+    }
+    __dpStyle.textContent = ${JSON.stringify(css)};
+    document.documentElement.setAttribute('data-theme', ${JSON.stringify(theme)});
+    true;
+  `;
+}
+
 export interface ScriptOptions {
   css: string;
   theme: 'light' | 'dark';

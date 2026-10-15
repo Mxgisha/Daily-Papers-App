@@ -31,7 +31,7 @@ import { ThemeToggle } from '../../src/components/ThemeToggle';
 import { needsRepair, useLibrary, type ReadingSpot } from '../../src/library';
 import { pdfViewerHtml } from '../../src/pdfViewer';
 import { READER_CSS } from '../../src/platform/readerCss.generated';
-import { RESTORE_JS, buildReaderScript, themeJs } from '../../src/readerScript';
+import { RESTORE_JS, buildReaderScript, ensureReaderCssJs, themeJs } from '../../src/readerScript';
 import { useTheme, type Palette } from '../../src/theme';
 import type { PaperItem } from '../../src/types';
 
@@ -337,6 +337,10 @@ export default function ReaderScreen() {
           key={`html-${initialSpot?.anchor ?? 'n'}-${initialSpot ? Math.round(initialSpot.fraction * 1000) : 'n'}`}
           source={htmlSource}
           injectedJavaScriptBeforeContentLoaded={injected}
+          // Backstop. See ensureReaderCssJs: the before-load injection is the one that
+          // prevents a flash, but it does not fire on every load on every WebView, and when
+          // it misses, arXiv's own dark header and toolbar come back.
+          injectedJavaScript={ensureReaderCssJs(READER_CSS, theme)}
           originWhitelist={['*']}
           startInLoadingState
           setSupportMultipleWindows={false}
