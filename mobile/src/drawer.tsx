@@ -93,6 +93,7 @@ const DESTINATIONS: Destination[] = [
   { href: '/', label: 'Papers', glyph: '▤' },
   { href: '/saved', label: 'Saved', glyph: '★' },
   { href: '/history', label: 'History', glyph: '◷' },
+  { href: '/settings', label: 'Settings', glyph: '⚙' },
 ];
 
 export function AppDrawer() {

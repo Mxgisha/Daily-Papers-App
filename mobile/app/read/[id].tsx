@@ -8,50 +8,70 @@
  *   PDF   when arXiv has no HTML rendering (~4% of papers), PDF.js draws the PDF in the
  *         WebView. No native module, so this keeps working in Expo Go.
  *
- * Position is { fraction, anchor }: how far through the document, plus the index of the
- * topmost visible block (or page, for a PDF).
+ * Position is { fraction, anchor }. Restore is belt-and-braces: the page retries until it
+ * stops growing, the app verifies where it actually landed and retries, and the header button
+ * does it on demand.
  *
- * Two things here are deliberately not done by remounting the WebView:
+ * Everything that changes the page after load — theme, text size, highlights — is injected
+ * rather than triggering a remount. A remount reloads the article and loses the reader's
+ * place, which is how theming used to behave.
  *
- *  - **Theme.** Changing colour injects `__dpTheme` into the loaded page. Remounting to
- *    recolour reloads the article, which is why toggling the theme used to throw the reader
- *    back to wherever the paper had originally been opened.
- *  - **Restore.** The page announces 'ready' and the app then drives the restore and checks
- *    where it landed, retrying if that is not where it asked for. The page's own timer can
- *    fire while the document is still blank.
+ * If a paper has been saved for offline reading, the saved HTML is used instead of fetching
+ * the live page, so "saved" actually means something on a train. Its figures still come from
+ * arXiv through the injected <base>, so it degrades to text-only when there is no connection.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 import { fetchArxivById } from '../../src/arxiv';
 import { ThemeToggle } from '../../src/components/ThemeToggle';
 import { needsRepair, useLibrary, type ReadingSpot } from '../../src/library';
+import { hasArticle, readArticle, removeArticle, saveArticle } from '../../src/offline';
 import { pdfViewerHtml } from '../../src/pdfViewer';
 import { READER_CSS } from '../../src/platform/readerCss.generated';
-import { RESTORE_JS, buildReaderScript, ensureReaderCssJs, themeJs } from '../../src/readerScript';
+import {
+  FIND_CLEAR_JS,
+  FIND_JS,
+  RESTORE_JS,
+  buildReaderScript,
+  ensureReaderCssJs,
+  setTextSizeJs,
+  themeJs,
+} from '../../src/readerScript';
+import { useSettings } from '../../src/settings';
 import { useTheme, type Palette } from '../../src/theme';
 import type { PaperItem } from '../../src/types';
 
 const ARXIV_HTML = 'https://arxiv.org/html/';
 const ARXIV_PDF = 'https://arxiv.org/pdf/';
+const ARXIV_ABS = 'https://arxiv.org/abs/';
 
-/** How far off the requested position we tolerate before trying again. */
 const RESTORE_TOLERANCE = 0.02;
 const MAX_RESTORE_TRIES = 3;
 
-/** A position at the very top is not somewhere to go back to. */
 function isUsableSpot(s: ReadingSpot | null): boolean {
   return !!s && (s.anchor >= 0 || s.fraction > 0.005);
 }
 
+type OfflineState = 'unknown' | 'saved' | 'none';
+
 export default function ReaderScreen() {
   const params = useLocalSearchParams<{ id: string }>();
-  // Old-style ids arrive percent-encoded (math.GT%2F0309136) so the route stays one segment.
   const id = decodeURIComponent(String(params.id ?? ''));
   const { theme, palette } = useTheme();
+  const { textSizePx, cycleTextScale } = useSettings();
   const {
     ready,
     favorites,
@@ -70,33 +90,21 @@ export default function ReaderScreen() {
 
   const webviewRef = useRef<WebView>(null);
   const [renderer, setRenderer] = useState<'html' | 'pdf'>('html');
-
-  /**
-   * The position the WebView was created with.
-   *
-   * Deliberately NOT updated as the reader scrolls: it is part of the WebView's `key`, so
-   * changing it would remount the page mid-read.
-   */
   const [initialSpot, setInitialSpot] = useState<ReadingSpot | null>(null);
-  /** Whether there is somewhere to return to, for the header button. Updated freely. */
   const [hasSpot, setHasSpot] = useState(false);
   const [meta, setMeta] = useState<PaperItem | null>(null);
-
-  /**
-   * Whether the saved position has been read yet.
-   *
-   * The WebView must not mount before it has. It used to: the position is read in an effect,
-   * which runs after the first render where storage is ready, so the WebView mounted with no
-   * position and was then remounted by its key changing — fetching the article from arXiv
-   * twice, and applying the restore only on the second, slower load.
-   */
   const [spotLoaded, setSpotLoaded] = useState(false);
 
-  /** What we are trying to land on, and how many times we have tried. */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findTerm, setFindTerm] = useState('');
+  const [findInfo, setFindInfo] = useState<{ count: number; index: number } | null>(null);
+  const [offlineState, setOfflineState] = useState<OfflineState>('unknown');
+  const [offlineHtml, setOfflineHtml] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
   const target = useRef<ReadingSpot | null>(null);
   const tries = useRef(0);
-
-  /** Which paper the state above belongs to, so a second paper re-reads rather than reuses. */
   const loadedFor = useRef<string | null>(null);
 
   useEffect(() => {
@@ -115,8 +123,25 @@ export default function ReaderScreen() {
     webviewRef.current?.injectJavaScript(themeJs(theme));
   }, [theme]);
 
-  // If the paper has never been on screen there is no cached title. Ask arXiv once so the
-  // header and any saved entry show a real name rather than "2610.14091".
+  // Same rule for text size.
+  useEffect(() => {
+    webviewRef.current?.injectJavaScript(setTextSizeJs(textSizePx));
+  }, [textSizePx]);
+
+  // Offline copy, if there is one.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const html = await readArticle(id);
+      if (!alive) return;
+      setOfflineHtml(html);
+      setOfflineState(html ? 'saved' : 'none');
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+
   useEffect(() => {
     if (!ready || meta) return;
     let alive = true;
@@ -142,14 +167,6 @@ export default function ReaderScreen() {
   const entry = favorites.find((f) => f.id === id);
   const finished = !!history.find((h) => h.id === id)?.finishedAt;
 
-  /**
-   * Record the open, once per paper.
-   *
-   * Recorded immediately with whatever metadata we have — `recordOpen` merges rather than
-   * overwrites, so a placeholder here does not clobber a good existing record, and the
-   * metadata effect below fills in the details when the lookup returns. Waiting for the
-   * lookup instead would mean a paper read offline never appears in history at all.
-   */
   const recordedFor = useRef<string | null>(null);
   useEffect(() => {
     if (!ready || !spotLoaded || recordedFor.current === id) return;
@@ -157,7 +174,6 @@ export default function ReaderScreen() {
     recordOpen(meta ?? { id, title: id, abstract: '', category: '', published: null, authors: [] });
   }, [ready, spotLoaded, id, meta, recordOpen]);
 
-  // Fill in (or repair) the history record once the details are known.
   useEffect(() => {
     if (!meta) return;
     updateHistory(id, {
@@ -169,7 +185,6 @@ export default function ReaderScreen() {
     });
   }, [meta, id, updateHistory]);
 
-  // Repair a saved entry whose metadata was not known when it was saved.
   useEffect(() => {
     if (!meta || !entry || !needsRepair(entry)) return;
     updateFavorite(id, {
@@ -185,28 +200,48 @@ export default function ReaderScreen() {
     webviewRef.current?.injectJavaScript(RESTORE_JS);
   }, []);
 
+  const runFind = useCallback((term: string) => {
+    if (!term.trim()) {
+      webviewRef.current?.injectJavaScript(FIND_CLEAR_JS);
+      setFindInfo(null);
+      return;
+    }
+    webviewRef.current?.injectJavaScript(`window.__dpFind(${JSON.stringify(term)}); true;`);
+  }, []);
+
+  const stepFind = useCallback((delta: number) => {
+    webviewRef.current?.injectJavaScript(
+      `window.__dpFindStep(${JSON.stringify(delta)}); true;`,
+    );
+  }, []);
+
   const onMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      let msg: { type?: string; fraction?: number; anchor?: number };
+      let msg: {
+        type?: string;
+        fraction?: number;
+        anchor?: number;
+        count?: number;
+        index?: number;
+      };
       try {
         msg = JSON.parse(event.nativeEvent.data);
       } catch {
-        return; // A malformed message is not worth interrupting reading for.
+        return;
       }
 
       if (msg.type === 'position' && typeof msg.fraction === 'number') {
         const next = { fraction: msg.fraction, anchor: msg.anchor ?? -1 };
         rememberPosition(id, next);
-        // Only the button's enabled state changes. `initialSpot` must not, or the WebView
-        // remounts on every scroll report.
         setHasSpot(isUsableSpot(next));
         return;
       }
 
       if (msg.type === 'ready') {
-        // The document is up. Re-assert the theme (a mid-load change would otherwise have
-        // used whichever value the injected script was built with) and drive the restore.
+        // A page that just loaded may have missed the before-load injection entirely.
         webviewRef.current?.injectJavaScript(themeJs(theme));
+        webviewRef.current?.injectJavaScript(setTextSizeJs(textSizePx));
+        webviewRef.current?.injectJavaScript(FIND_JS);
         if (target.current) {
           tries.current = 0;
           askRestore();
@@ -214,23 +249,24 @@ export default function ReaderScreen() {
         return;
       }
 
+      if (msg.type === 'find' && typeof msg.count === 'number') {
+        setFindInfo({ count: msg.count, index: msg.index ?? -1 });
+        return;
+      }
+
       if (msg.type === 'restored') {
         const want = target.current;
         if (!want || typeof msg.fraction !== 'number') return;
         const off = Math.abs(msg.fraction - want.fraction);
-        // Closed loop: the page reports where it actually landed, so we can tell the
-        // difference between "restored" and "asked to restore".
         if (off > RESTORE_TOLERANCE && tries.current < MAX_RESTORE_TRIES) {
           tries.current += 1;
           setTimeout(askRestore, 700);
         }
       }
     },
-    [id, rememberPosition, theme, askRestore],
+    [id, rememberPosition, theme, textSizePx, askRestore],
   );
 
-  // The script is a module so it can be exercised against real arXiv HTML in a browser;
-  // see mobile/harness/check_restore.py.
   const injected = useMemo(
     () => buildReaderScript({ css: READER_CSS, theme, spot: initialSpot }),
     [theme, initialSpot],
@@ -241,12 +277,52 @@ export default function ReaderScreen() {
     [id, theme, initialSpot],
   );
 
-  const htmlSource = useMemo(() => ({ uri: `${ARXIV_HTML}${id}` }), [id]);
+  const htmlSource = useMemo(
+    () => (offlineHtml ? { html: offlineHtml } : { uri: `${ARXIV_HTML}${id}` }),
+    [offlineHtml, id],
+  );
+
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
-  // Wait for storage, and for the saved position, so the first paint already knows where to
-  // scroll and the article is fetched once rather than twice.
-  if (!ready || !spotLoaded) {
+  const share = useCallback(() => {
+    setMenuOpen(false);
+    void Share.share({
+      message: `${meta?.title ?? id}\n${ARXIV_ABS}${id}`,
+      title: meta?.title ?? id,
+    });
+  }, [id, meta]);
+
+  const toggleOffline = useCallback(async () => {
+    setMenuOpen(false);
+    setBusy(true);
+    try {
+      if (offlineState === 'saved') {
+        await removeArticle(id);
+        setOfflineHtml(null);
+        setOfflineState('none');
+      } else {
+        const result = await saveArticle(id);
+        if (result.ok) {
+          setOfflineHtml(await readArticle(id));
+          setOfflineState('saved');
+        } else {
+          setOfflineState('none');
+          void Share.share({ message: `Could not save ${id}: ${result.error}` });
+        }
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, [id, offlineState]);
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindTerm('');
+    setFindInfo(null);
+    webviewRef.current?.injectJavaScript(FIND_CLEAR_JS);
+  }, []);
+
+  if (!ready || !spotLoaded || offlineState === 'unknown') {
     return (
       <View style={styles.loading}>
         <ActivityIndicator color={palette.accent} />
@@ -255,8 +331,8 @@ export default function ReaderScreen() {
   }
 
   const headerTitle = meta?.title
-    ? meta.title.length > 30
-      ? `${meta.title.slice(0, 29)}…`
+    ? meta.title.length > 26
+      ? `${meta.title.slice(0, 25)}…`
       : meta.title
     : 'Reading';
 
@@ -265,8 +341,8 @@ export default function ReaderScreen() {
       <Stack.Screen
         options={{
           title: headerTitle,
-          // Undo the drawer control the stack sets by default: from here the useful thing on
-          // the left is the way back, and this is the only screen that has one.
+          // The drawer control belongs on the list screens; here the useful left control is
+          // the way back, which this screen is the only one to have.
           headerLeft: undefined,
           headerRight: () => (
             <View style={styles.headerRight}>
@@ -281,7 +357,7 @@ export default function ReaderScreen() {
                 accessibilityLabel={
                   hasSpot ? 'Return to where you stopped reading' : 'No saved position yet'
                 }
-                hitSlop={12}
+                hitSlop={10}
                 style={styles.headerButton}
               >
                 <Text style={[styles.glyph, hasSpot && styles.glyphOn]}>⟲</Text>
@@ -301,12 +377,10 @@ export default function ReaderScreen() {
                 testID="reader-save"
                 accessibilityRole="button"
                 accessibilityLabel={saved ? 'Remove from favorites' : 'Save to favorites'}
-                hitSlop={12}
+                hitSlop={10}
                 style={styles.headerButton}
               >
-                <Text style={[styles.glyph, saved && styles.glyphOn]}>
-                  {saved ? '★' : '☆'}
-                </Text>
+                <Text style={[styles.glyph, saved && styles.glyphOn]}>{saved ? '★' : '☆'}</Text>
               </Pressable>
 
               <Pressable
@@ -314,33 +388,83 @@ export default function ReaderScreen() {
                 testID="reader-finished"
                 accessibilityRole="button"
                 accessibilityState={{ selected: finished }}
-                accessibilityLabel={
-                  finished ? 'Mark as not finished' : 'Mark as finished reading'
-                }
-                hitSlop={12}
+                accessibilityLabel={finished ? 'Mark as not finished' : 'Mark as finished reading'}
+                hitSlop={10}
                 style={styles.headerButton}
               >
                 <Text style={[styles.glyph, finished && styles.glyphOn]}>✓</Text>
               </Pressable>
 
-              <ThemeToggle />
+              <Pressable
+                onPress={cycleTextScale}
+                testID="reader-textsize"
+                accessibilityRole="button"
+                accessibilityLabel="Change text size"
+                hitSlop={10}
+                style={styles.headerButton}
+              >
+                <Text style={styles.aa}>Aa</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setMenuOpen(true)}
+                testID="reader-menu"
+                accessibilityRole="button"
+                accessibilityLabel="More actions"
+                hitSlop={10}
+                style={styles.headerButton}
+              >
+                <Text style={styles.glyph}>⋯</Text>
+              </Pressable>
             </View>
           ),
         }}
       />
 
+      {findOpen && (
+        <View style={styles.findBar}>
+          <TextInput
+            value={findTerm}
+            onChangeText={(t) => {
+              setFindTerm(t);
+              runFind(t);
+            }}
+            placeholder="Find in paper"
+            placeholderTextColor={palette.dim}
+            autoFocus
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="find-input"
+            style={styles.findInput}
+          />
+          <Text style={styles.findCount}>
+            {findInfo === null
+              ? ''
+              : findInfo.count === 0
+                ? 'none'
+                : `${findInfo.index + 1}/${findInfo.count}`}
+          </Text>
+          <Pressable onPress={() => stepFind(-1)} hitSlop={10} style={styles.findButton}>
+            <Text style={styles.findButtonText}>‹</Text>
+          </Pressable>
+          <Pressable onPress={() => stepFind(1)} hitSlop={10} style={styles.findButton}>
+            <Text style={styles.findButtonText}>›</Text>
+          </Pressable>
+          <Pressable onPress={closeFind} hitSlop={10} style={styles.findButton}>
+            <Text style={styles.findButtonText}>✕</Text>
+          </Pressable>
+        </View>
+      )}
+
       {renderer === 'html' ? (
         <WebView
           ref={webviewRef}
-          // Keyed on the initial position only — never on the theme, which would reload the
-          // article and lose the reader's place.
-          key={`html-${initialSpot?.anchor ?? 'n'}-${initialSpot ? Math.round(initialSpot.fraction * 1000) : 'n'}`}
+          key={`html-${offlineHtml ? 'off' : 'net'}-${initialSpot?.anchor ?? 'n'}-${initialSpot ? Math.round(initialSpot.fraction * 1000) : 'n'}`}
           source={htmlSource}
           injectedJavaScriptBeforeContentLoaded={injected}
-          // Backstop. See ensureReaderCssJs: the before-load injection is the one that
-          // prevents a flash, but it does not fire on every load on every WebView, and when
-          // it misses, arXiv's own dark header and toolbar come back.
-          injectedJavaScript={ensureReaderCssJs(READER_CSS, theme)}
+          injectedJavaScript={
+            ensureReaderCssJs(READER_CSS, theme) + setTextSizeJs(textSizePx) + FIND_JS
+          }
           originWhitelist={['*']}
           startInLoadingState
           setSupportMultipleWindows={false}
@@ -380,7 +504,60 @@ export default function ReaderScreen() {
           style={styles.webview}
         />
       )}
+
+      {busy && (
+        <View style={styles.busy}>
+          <ActivityIndicator color={palette.accent} />
+        </View>
+      )}
+
+      <Modal
+        visible={menuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuOpen(false)}
+      >
+        <Pressable style={styles.backdrop} onPress={() => setMenuOpen(false)}>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <SheetRow
+              label="Find in paper"
+              onPress={() => {
+                setMenuOpen(false);
+                setFindOpen(true);
+              }}
+              styles={styles}
+            />
+            <SheetRow label="Share" onPress={share} styles={styles} />
+            <SheetRow
+              label={offlineState === 'saved' ? 'Remove offline copy' : 'Save for offline'}
+              onPress={() => void toggleOffline()}
+              styles={styles}
+            />
+            <View style={styles.sheetDivider} />
+            <View style={styles.sheetTheme}>
+              <Text style={styles.sheetLabel}>Theme</Text>
+              <ThemeToggle />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
+  );
+}
+
+function SheetRow({
+  label,
+  onPress,
+  styles,
+}: {
+  label: string;
+  onPress: () => void;
+  styles: ReturnType<typeof makeStyles>;
+}) {
+  return (
+    <Pressable onPress={onPress} style={styles.sheetRow} accessibilityRole="button">
+      <Text style={styles.sheetLabel}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -399,7 +576,60 @@ const makeStyles = (p: Palette) =>
       backgroundColor: p.bg,
     },
     headerRight: { flexDirection: 'row', alignItems: 'center' },
-    headerButton: { paddingHorizontal: 6, paddingVertical: 4 },
-    glyph: { fontSize: 20, color: p.dim },
+    headerButton: { paddingHorizontal: 5, paddingVertical: 4 },
+    glyph: { fontSize: 19, color: p.dim },
     glyphOn: { color: p.accent },
+    aa: { fontSize: 15, fontWeight: '700', color: p.dim },
+    findBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: p.border,
+      backgroundColor: p.headerBg,
+    },
+    findInput: {
+      flex: 1,
+      color: p.text,
+      backgroundColor: p.inputBg,
+      borderRadius: 7,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      fontSize: 14,
+    },
+    findCount: { color: p.dim, fontSize: 12, minWidth: 42, textAlign: 'center' },
+    findButton: { paddingHorizontal: 7, paddingVertical: 2 },
+    findButtonText: { color: p.accent, fontSize: 19 },
+    busy: {
+      position: 'absolute',
+      bottom: 26,
+      alignSelf: 'center',
+      backgroundColor: p.headerBg,
+      padding: 12,
+      borderRadius: 24,
+    },
+    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+    sheet: {
+      backgroundColor: p.headerBg,
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+      paddingVertical: 10,
+      paddingBottom: 28,
+    },
+    sheetRow: { paddingHorizontal: 20, paddingVertical: 15 },
+    sheetDivider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: p.border,
+      marginVertical: 6,
+    },
+    sheetTheme: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingVertical: 10,
+    },
+    sheetLabel: { color: p.text, fontSize: 16 },
   });

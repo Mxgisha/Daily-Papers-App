@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { ThemeToggle } from '../src/components/ThemeToggle';
 import { AppDrawer, DrawerButton, DrawerProvider } from '../src/drawer';
 import { LibraryProvider } from '../src/library';
+import { SettingsProvider } from '../src/settings';
 import { ThemeProvider, useTheme } from '../src/theme';
 
 /**
@@ -34,6 +35,7 @@ function RootStack() {
         <Stack.Screen name="index" options={{ title: 'Papers' }} />
         <Stack.Screen name="saved" options={{ title: 'Saved' }} />
         <Stack.Screen name="history" options={{ title: 'History' }} />
+        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
         <Stack.Screen name="read/[id]" options={{ title: 'Reading' }} />
       </Stack>
     </>
@@ -43,14 +45,16 @@ function RootStack() {
 export default function RootLayout() {
   return (
     <ThemeProvider>
-      <LibraryProvider>
-        <DrawerProvider>
-          {/* The drawer is a sibling of the navigator, not part of it, so it can overlay any
-              screen — including the reader, which covers everything else. */}
-          <RootStack />
-          <AppDrawer />
-        </DrawerProvider>
-      </LibraryProvider>
+      <SettingsProvider>
+        <LibraryProvider>
+          <DrawerProvider>
+            {/* The drawer is a sibling of the navigator, not part of it, so it can overlay
+                any screen — including the reader, which covers everything else. */}
+            <RootStack />
+            <AppDrawer />
+          </DrawerProvider>
+        </LibraryProvider>
+      </SettingsProvider>
     </ThemeProvider>
   );
 }

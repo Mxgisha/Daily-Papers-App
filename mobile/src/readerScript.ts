@@ -82,6 +82,135 @@ export function ensureReaderCssJs(css: string, theme: 'light' | 'dark'): string 
   `;
 }
 
+/**
+ * Set the article's body size.
+ *
+ * The stylesheet reads `--font-size` from `:root`, so this is a one-line override rather than
+ * a second stylesheet. Re-running the whole reader script instead would re-attach every
+ * listener and restart the restore loop, which is why it is its own injection.
+ */
+export function setTextSizeJs(px: number): string {
+  return `document.documentElement.style.setProperty('--font-size', ${JSON.stringify(`${px}px`)}); true;`;
+}
+
+/**
+ * In-page search.
+ *
+ * `window.__dpFind(term)` highlights every match and reports how many there are;
+ * `window.__dpFindStep(delta)` moves between them. Wrapping matches in `<mark>` is more code
+ * than `window.find()`, but `window.find()` is not available in every WebView, cannot report
+ * a count, and cannot step backwards.
+ *
+ * Text nodes only: a match never spans an element boundary, which keeps the DOM surgery
+ * local and reversible. Clearing replaces each mark with its own text and normalises the
+ * parent, so repeated searches do not fragment the document.
+ */
+export const FIND_JS = `
+  (function () {
+    if (window.__dpFind) return true;
+
+    var style = document.getElementById('__dp_find_css');
+    if (!style) {
+      style = document.createElement('style');
+      style.id = '__dp_find_css';
+      (document.head || document.documentElement).appendChild(style);
+    }
+    style.textContent =
+      'mark.__dp_hl{background:#ffd54a;color:#111;border-radius:2px;padding:0 1px}' +
+      'mark.__dp_hl.__dp_cur{background:#ff8a00;color:#000;outline:2px solid #ff8a00}';
+
+    var marks = [];
+    var index = -1;
+
+    // injectJavaScript cannot return a value, so results come back over the bridge like
+    // everything else the page has to tell the app.
+    function post(m) {
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(m));
+    }
+    function report() {
+      post({ type: 'find', count: marks.length, index: index });
+    }
+
+    function clear() {
+      var old = document.querySelectorAll('mark.__dp_hl');
+      for (var i = 0; i < old.length; i++) {
+        var m = old[i];
+        if (!m.parentNode) continue;
+        m.parentNode.replaceChild(document.createTextNode(m.textContent), m);
+        m.parentNode.normalize();
+      }
+      marks = [];
+      index = -1;
+    }
+
+    function focus(i) {
+      if (marks.length === 0) return;
+      index = ((i % marks.length) + marks.length) % marks.length;
+      for (var k = 0; k < marks.length; k++) {
+        marks[k].classList.toggle('__dp_cur', k === index);
+      }
+      marks[index].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+
+    window.__dpFind = function (term) {
+      clear();
+      var needle = String(term || '');
+      if (!needle) return { count: 0, index: -1 };
+      var lower = needle.toLowerCase();
+      var root = document.querySelector('article') || document.body;
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+      var nodes = [];
+      while (walker.nextNode()) {
+        var node = walker.currentNode;
+        if (node.parentNode && node.parentNode.closest && node.parentNode.closest('mark.__dp_hl')) continue;
+        if (node.nodeValue && node.nodeValue.toLowerCase().indexOf(lower) !== -1) nodes.push(node);
+      }
+      for (var i = 0; i < nodes.length; i++) {
+        var text = nodes[i].nodeValue;
+        var at = text.toLowerCase().indexOf(lower);
+        var frag = document.createDocumentFragment();
+        var pos = 0;
+        while (at !== -1) {
+          frag.appendChild(document.createTextNode(text.slice(pos, at)));
+          var mark = document.createElement('mark');
+          mark.className = '__dp_hl';
+          mark.textContent = text.slice(at, at + needle.length);
+          frag.appendChild(mark);
+          pos = at + needle.length;
+          at = text.toLowerCase().indexOf(lower, pos);
+        }
+        frag.appendChild(document.createTextNode(text.slice(pos)));
+        nodes[i].parentNode.replaceChild(frag, nodes[i]);
+      }
+      marks = Array.prototype.slice.call(document.querySelectorAll('mark.__dp_hl'));
+      if (marks.length) focus(0);
+      report();
+      return { count: marks.length, index: marks.length ? 0 : -1 };
+    };
+
+    window.__dpFindStep = function (delta) {
+      if (!marks.length) {
+        report();
+        return { count: 0, index: -1 };
+      }
+      focus(index + (delta || 1));
+      report();
+      return { count: marks.length, index: index };
+    };
+
+    window.__dpFindClear = function () {
+      clear();
+      report();
+      return true;
+    };
+
+    true;
+  })();
+`;
+
+/** Clear highlights so a reopened paper, or a closed find bar, leaves no marks behind. */
+export const FIND_CLEAR_JS = 'window.__dpFindClear && window.__dpFindClear(); true;';
+
 export interface ScriptOptions {
   css: string;
   theme: 'light' | 'dark';

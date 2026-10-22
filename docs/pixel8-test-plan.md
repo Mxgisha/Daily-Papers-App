@@ -41,32 +41,61 @@ plugins and generates a real manifest, which is most of what a build failure wou
 
 ---
 
-## 2. Features worth trying — and what to add first
+## 2. Features — built
 
-The purpose of the week is learning, not breadth. **Every feature is another thing that can
-break during the exact week you are trying to observe the app.** So the recommendation is a
-small Tier 1, with everything else banked for week two.
+All six are in. They are listed with what they actually do, because the point of the week is
+to find out which of them earn their place.
 
-### Tier 1 — add before the APK
+### Reader
 
-| Feature | Why | Risk |
-|---|---|---|
-| **Text size control** | One `Aa` control in the reader header cycling three sizes, persisted. The CSS already has a `--font-size` variable; the spike had `A+/A−` buttons. Long reading sessions are the whole product, and 18px is a guess. | Low — one CSS variable, one persisted number |
-| **In-app diagnostics** | A screen reachable from the drawer showing app version, device, counts (saved / history / positions), current reader mode, and the last reader error — with a **Copy** button. For a test run this is the highest-value item: it turns "the paper broke" into a reproducible report without a laptop. | Low — read-only, no new deps |
-| **Share paper** | `Share.share()` with the arXiv abstract URL. Papers are read to be passed on. | Very low — ~15 lines, no deps |
-
-### Tier 2 — week two, if the week goes well
-
-| Feature | Why |
+| Feature | What it does |
 |---|---|
-| **Daily reminder** | A local scheduled notification. Without one, a seven-day test quietly becomes a two-day test. Costs `expo-notifications` plus a permission prompt on Android 13+. |
-| **Find in page** | Search the article and jump between matches. Reading a paper is often "where do they define X". |
-| **Offline save** | Keep the article and its figures for a commute. The lazy-figure work is most of the plumbing already. |
+| **Text size** | `Aa` in the reader header cycles Small / Default / Large (16/18/21 px) and persists. It sets the stylesheet's own `--font-size` variable — no second stylesheet, no reload. Also settable in Settings. |
+| **Find in paper** | `⋯` → Find in paper. Highlights every match, shows `3/17`, and steps with ‹ ›. Matches are wrapped in `<mark>` by walking text nodes, so stepping works forwards and backwards — which `window.find()` cannot do. Closing the bar un-highlights and normalises the DOM. |
+| **Share** | `⋯` → Share. Sends the title and the arXiv abstract URL through the system share sheet. |
+| **Save for offline** | `⋯` → Save for offline. Stores the article HTML on the device; reopening uses that copy instead of fetching. |
+| **Theme** | Moved into the `⋯` menu as the header ran out of room. Still applied by injection, never by reload. |
 
-### Tier 3 — deliberately not now
+### Settings & diagnostics
 
-Recommendations, text-to-speech, highlights and annotations. Each is a multi-day job with
-its own failure modes; none of them help you learn whether the reader is good.
+Reachable from the drawer. Contains the text size control, the daily reminder, the offline
+count, and a **copyable diagnostics block**: app version and `versionCode`, device model,
+screen size, counts of saved papers, history, positions and recent searches, text size,
+whether a reminder is scheduled.
+
+That block is the point. During a week of testing, "the paper broke" is not a report; a
+paste with the version, the device and the counts is.
+
+### Daily reminder
+
+A local scheduled notification — no server, no push token. Tap the row to cycle through
+off / 08:00 / 12:00 / 18:00 / 21:00. Android 13+ permission is requested when you turn it on,
+and if it is refused the setting stays **off** rather than claiming a reminder that cannot be
+delivered.
+
+A seven-day test only produces seven days of data if something asks you to read on day three.
+
+### Offline: what it does and does not store
+
+**Text only.** The article HTML — prose, equations, structure — is saved; figures are not.
+Figures are the overwhelming majority of a paper's bytes (measured earlier: 28 MB of figures
+against 388 KB of text), so storing them turns one tap into a download manager with progress,
+cancellation and eviction.
+
+A `<base>` element pointing at arXiv is injected into the saved page, so figures still load
+when there is a connection. Offline you get the text; online you get everything.
+
+### Deliberately not built
+
+Recommendations, text-to-speech, highlights and annotations. Each is a multi-day job with its
+own failure modes, and none of them help you learn whether the reader is good.
+
+### The dependency cost
+
+`expo-notifications`, `expo-device` and `expo-file-system` are now declared dependencies, so
+they are compiled into the APK. That is the price of the reminder, the device model in
+diagnostics, and offline storage. If the week shows any of them unused, removing the feature
+also removes the native module.
 
 ---
 
