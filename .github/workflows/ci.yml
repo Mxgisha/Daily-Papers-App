@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  app:
+    name: App — typecheck and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      # --legacy-peer-deps: React Native's peer ranges conflict with the Expo SDK
+      # pins, and the app installs this way locally too.
+      - name: Install
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Tests
+        run: npm test
+
+  pipeline:
+    name: Pipeline — Python syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The data pipeline needs PostgreSQL and network access to arXiv to run for real,
+      # so CI only checks that it parses. Running it end to end is a local, manual step.
+      - name: Compile
+        run: python -m compileall -q dailypapers ingest bundle recsys reader eval spike

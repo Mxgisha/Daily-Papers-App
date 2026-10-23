@@ -1,289 +1,169 @@
-# Daily Papers App
+<p align="center">
+  <img src="docs/screenshots/01-papers.jpg" width="300" alt="Daily Papers — paper list">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/03-settings.jpg" width="300" alt="Daily Papers — settings and diagnostics">
+</p>
 
-A mobile-first research paper reader with a daily personalized feed, progress sync,
-favorites/collections, and a recommendation system that learns the user.
+<h1 align="center">Daily Papers</h1>
 
-See **[PLAN.md](PLAN.md)** for strategy and stack rationale.
+<p align="center">
+  A phone-native reader for arXiv papers.<br>
+  Reflowed for a 6-inch screen instead of a two-column PDF.
+</p>
 
-## Architecture: static bundle, on-device personalization, no server
+<p align="center">
+  <a href="https://github.com/USER/REPO/releases/latest"><b>Download the Android APK →</b></a>
+  &nbsp;·&nbsp;
+  <a href="docs/pixel8-test-plan.md">Test plan</a>
+  &nbsp;·&nbsp;
+  <a href="docs/design-notes.md">Design notes</a>
+</p>
 
-Read-only content is precomputed and shipped as static files; all personalization runs on
-the device. The only central component is a small managed store for identity and telemetry.
+---
 
-```
-  nightly job (GitHub Action, free)  ──  reuses ingest/ + SPECTER2 on CPU
-        │
-        ├─ app_bundle.db.zst      SQLite: metadata, tags, FTS5 search index
-        ├─ vectors.bin            packed, mean-centered int8 embeddings + id map
-        ├─ delta/<date>.jsonl.zst new papers for incremental sync
-        └─ manifest.json          checksums + remote ranking configuration
-                    ↓
-        Cloudflare R2 / any CDN — files only, no logic
-                    ↓
-  ┌────────────────── Expo app (offline-first) ──────────────────┐
-  │  SQLite corpus + local progress/favorites/collections         │
-  │  On-device scoring → MMR → ε-greedy exploration               │
-  │  Local scheduled notifications                                │
-  └───────────────────────────────────────────────────────────────┘
-                    ↓ batched, idempotent, when online
-        managed Postgres (Supabase free tier) — auth + events only
-```
+arXiv papers are written for A4. Reading one on a phone means pinch-zooming around a page
+designed for a desktop, and most tools treat mobile as an afterthought. This app reads the
+paper as **reflowed text** instead — one column, comfortable measure, no sideways scrolling —
+and remembers where you stopped.
 
-No FastAPI, no Redis, no server process to operate. **Infra cost at MVP is $0/month**; the
-only unavoidable spend is Apple's $99/year when shipping to iOS.
+96.4% of recent papers have an HTML full text that can be reflowed. The other 4% get an
+in-app PDF reader.
 
-## Status
+**No backend.** Every content path is a bundled asset or a direct request from the phone to
+arXiv. Nothing to deploy, nothing to pay for, nothing to go down.
 
-Phases 0 and 1 are done and verified, plus reader and feed feasibility spikes.
+## What it does
 
-| What | Result |
+| | |
 |---|---|
-| HTML full text, recent papers | **96.4%** (87% back to 2017) |
-| OpenAlex enrichment, same-day preprints | **99.7%**, zero lag |
-| Best vector encoding | **int8: 99.8% recall@20** after centering (binary: 78.5%) |
-| Reflowed reading at 390×844 | **viable** — zero page overflow, 91 screens for a 15k-word paper |
-| Feed diversity after centering | pairwise similarity **0.897 → 0.205**, categories 5 → 7 |
-| TypeScript feed vs Python reference | **identical ranking** on the real bundle |
-| Client executed end to end in a browser | **8/8 checks**, full pipeline in ~315 ms |
+| **Read** | Reflowed arXiv HTML, or the PDF rendered in-app by PDF.js when there is no HTML |
+| **Find** | 1,000 bundled papers, topic filters, and full-text search across all of arXiv |
+| **Keep** | Save for later, reading history, finished reads, reading-position memory |
+| **Offline** | Save a paper's text for a commute; figures load when there is a connection |
+| **Adjust** | Text size, light/dark, a daily reminder to read |
+| **Diagnose** | A settings screen that reports version, device and state, for reporting bugs |
 
-## The two findings that reshaped the design
+## The parts worth reading
 
-### 1. SPECTER2 is severely anisotropic — center the vectors
+This is the code I'd actually point at.
 
-Raw SPECTER2 cosine is nearly useless as a ranking signal. Measured across the corpus, the
-**mean vector has norm 0.919**, and pairwise cosine sits in a narrow band:
+**1. Reflowing someone else's HTML for a phone** — [reader/static/reader.css](reader/static/reader.css), [mobile/src/readerScript.ts](mobile/src/readerScript.ts)
 
-| | raw cosine | mean-centered |
-|---|---|---|
-| pairwise cosine spread (p5–p95) | **0.114** | **0.565** |
-| int8 recall@20 vs exact | 95.3% | **99.8%** |
-| binary recall@20 vs exact | 63.7% | 78.5% |
+arXiv ships desktop CSS with a wide measure and fixed-width layout. The reader loads arXiv's
+own page and injects a replacement stylesheet **before first paint**, so the desktop layout
+never flashes.
 
-Because the spread was only 0.114, ranking was decided by tiny differences and MMR had
-nothing to work with — the first feed generated was **85.6% mean pairwise similar** and
-10/20 papers were from one category. Centering (`normalize(v - centroid)`) is now applied
-**before quantization at bundle-build time**, so the device pays nothing at query time. The
-centroid is stored in `vectors.bin` and the manifest so lazily fetched older shards stay
-comparable.
+Three separate things were making the page wider than the screen. Two were LaTeXML markup
+that the stylesheet didn't account for — footnote bodies rendered inline (16 of them made one
+page 869px wide against a 390px viewport), and formulas LaTeXML couldn't convert. The third
+was **my own rule**: I set `white-space: nowrap` on citation markers to keep `[12]` together,
+not realising LaTeXML reuses that class for URLs. One bibliography entry measured 815px and,
+because the page could no longer scroll sideways, was being silently *clipped* — the text was
+simply gone.
 
-Effect on feed quality, same seeds and config (re-measured after the `vec_index` fix
-described below, so these are from corrected code):
+**2. Reading-position memory that survives reflow** — [mobile/src/library.tsx](mobile/src/library.tsx)
 
-| metric | before | after |
-|---|---|---|
-| mean pairwise similarity | 0.897 | **0.205** |
-| distinct categories | 5 | **7** |
-| topic entropy (normalized) | 0.781 | **0.840** |
+A pixel offset is meaningless once the text reflows or the font size changes. A pure fraction
+drifts too, because lazy-loaded figures keep growing the document after load. So a position is
+`{ fraction, anchor }` where the anchor is the index of the topmost visible block.
 
-### 2. Figures, not text, are the real payload
+Restore is belt-and-braces: the page retries until it stops growing, the app then *verifies
+where it actually landed* and retries, and a header button does it on demand. The first
+version gave up after five seconds of retrying — which sounds generous until you notice that
+a page which hasn't started loading yet also has a stable height, so it was quitting before
+there was anything to scroll.
 
-Measured on one 15,028-word paper:
+**3. The cache that poisoned itself** — [mobile/src/useRepair.ts](mobile/src/useRepair.ts)
 
-| | size |
+Papers saved from arXiv search were stored under their arXiv ID instead of a title. The fix
+added a metadata cache — and that made it worse in an interesting way: the Saved screen renders
+the same card component as everywhere else, and the card registers whatever it renders into
+the cache. So a *broken* entry registered itself as the cached metadata for its own ID, and the
+repair then read that back, found nothing had changed, and stopped. Two rounds of fixes failed
+before I traced it. The cache now refuses to store a placeholder.
+
+**4. Verification that runs the real thing** — [mobile/harness/](mobile/harness/)
+
+Typechecking proves almost nothing about a reader. The harness exports the app, serves it, and
+drives headless Chromium at an emulated 390×844 viewport, screenshooting every screen. A
+separate harness runs the *actual* injected script against *real* arXiv HTML and measures
+where the page lands — which is how the position bug above was finally caught.
+
+It has also caught bugs in itself: a synthetic `.click()` silently did nothing on a React
+Native WebView `Pressable`, so an early "test passed" was two byte-identical screenshots.
+
+## What works, and what I haven't proven
+
+Being precise about this is more useful than a feature list.
+
+**Verified:** reflow at phone width with no sideways scroll across six papers and six
+categories · any arXiv ID opens, old style and new · in-app PDF rendering · topic filters,
+search, paper of the day · saves, history, finished reads · typecheck, tests, and a clean
+`expo prebuild`.
+
+**Not verified, because it needs a real device:** notifications, offline file storage,
+the find-in-page bridge, and native WebView behaviour. The repo is set up for a week-long
+test on a Pixel 8 — see [the test plan](docs/pixel8-test-plan.md). Until that runs, those
+three are "written", not "working".
+
+## How it is built
+
+```
+┌─────────────────────────── the phone ───────────────────────────┐
+│  Papers ──┬── papers.json      1,000 papers, offline            │
+│           ├── arXiv API        full-text search                 │
+│           └── Hugging Face     paper of the day (upvotes)       │
+│                       ↓                                          │
+│  Reader ──┬── arxiv.org/html/{id}   + injected stylesheet        │
+│           └── arxiv.org/pdf/{id}    + PDF.js in a WebView        │
+│                       ↓                                          │
+│  AsyncStorage: saved · history · positions · titles              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Expo SDK 57 / React Native 0.86 / React 19 / TypeScript**, `expo-router` for navigation,
+`react-native-webview` for both renderers, AsyncStorage for state. The one deliberate choice
+worth explaining: a WebView *for one screen* rather than a wrapped website. The markup is
+deeply nested HTML with tables and native MathML; parsing that into native components is a
+large amount of work with no good answer for equations.
+
+The PDF path is PDF.js 3.11.174 inside the same WebView — no native module, so the app still
+runs in Expo Go. That works because arXiv serves PDFs with `access-control-allow-origin: *`
+and supports range requests, which I checked before choosing it rather than after.
+
+## Repository map
+
+| Path | What it is |
 |---|---|
-| arXiv page HTML | 423 KB |
-| extracted article | 388 KB (91.6% of the page) |
-| **62 figure images** | **28.0 MB** (largest single figure 710 KB) |
+| `mobile/` | **The app.** Screens in `app/`, logic in `src/`, verification harness in `harness/` |
+| `docs/` | Design notes, the Pixel 8 test plan, and a PDF write-up |
+| `dailypapers/` `ingest/` `bundle/` `recsys/` `db/` `eval/` `spike/` | The Python data pipeline behind the bundled list: crawl → enrich → embed → bundle |
+| `reader/` | The reader stylesheet and extraction spike the app's CSS is generated from |
+| `lab/` | Real, tested work that the app does not use: an on-device recommendation pipeline. Kept out of `mobile/` so its dependencies aren't compiled into the APK |
 
-The figures are **72× the article text**. Stripping arXiv's chrome saves only 8%; the win is
-layout, not bytes. This makes lazy loading and server-side figure downscaling a requirement
-rather than a nicety, and it is the number that should drive any offline-caching budget.
+`mobile/tests/architecture.test.ts` enforces that boundary: it fails if a screen imports
+off-path machinery, or if a relative import stops resolving.
 
-## Quantization: ship int8, not binary
-
-| K | binary (96 B) | int8 (768 B) |
-|---|---|---|
-| 10 | 77.5% | 99.7% |
-| **20** | **78.5%** | **99.8%** |
-| 100 | 83.1% | 99.8% |
-
-Spearman vs exact cosine: int8 **1.000**, binary 0.94. Binary was the expected choice
-(32× smaller) and it is wrong: it discards a fifth of a feed page, and it degrades as the
-corpus grows. Re-run with `python3 -m eval.quantization_recall --source db`; full output in
-[reports/quantization_recall.md](reports/quantization_recall.md).
-
-### Bundle sizing
-
-Using measured constants (1,671 B/paper metadata, 780 B/paper int8, zstd ~34% of raw):
-
-| Window | Papers | Metadata | Vectors | Total |
-|---|---|---|---|---|
-| 90 days | ~40,700 | ~23 MB | ~32 MB | **~55 MB** |
-| 365 days | ~130,500 | ~74 MB | ~102 MB | ~176 MB |
-
-**Ship 90 days (~55 MB) and lazy-fetch older months as static shards.** Note that the figure
-payload above is separate and unbounded — it must be streamed and cached, not bundled.
-
-## The reader
-
-`python3 -m reader serve` opens a local reader; `python3 -m reader shot <id>` measures it.
-The extractor and CSS are the parts that carry over to the real client.
-
-What it does: extracts `<article class="ltx_document">` from arXiv HTML, drops arXiv's
-desktop CSS, and re-lays it out for one column with sticky controls, font scaling, and dark
-mode. Math is **native MathML** (403 elements on the test paper) so no MathJax is needed.
-
-Verified against real browsers, not assumed:
-
-- **Chromium's `--window-size` clamps the layout viewport to a 500px minimum.** A 390px
-  headless screenshot is a 500px layout rendered into a 390px image, which silently
-  invalidates reflow and overflow measurements. `reader/driver.py` uses WebDriver
-  mobile emulation to get a genuine 390×844 viewport.
-- After fixing equation-table overflow, **page-level horizontal overflow is zero** at 390px.
-- 15,028 words is **~91 screens**. Long papers need progress affordances, not just scroll.
-- Layout gotchas fixed along the way: per-author contact blocks interleaved with names (the
-  gaps are literal em-space spans, not a text-align problem), and wide tables — including
-  LaTeXML's `ltx_equation` tables — each need their own horizontal scroller.
-
-Tradeoff recorded in the CSS: suppressing per-author notes also drops affiliations. The real
-client should parse the note block and render unique affiliations once below the byline.
-
-## The feed
-
-`python3 -m recsys feed --seeds <ids...>` runs the pipeline the client will run:
-
-```
-seeds → user vector → candidate pool → score → MMR diversify → ε-explore → feed
-```
-
-Weights come from `manifest.json`, so the recommender can be retuned without shipping a
-client. The CLI prints each item's score components and per-stage attribution, so a bad feed
-can be blamed on a specific stage rather than guessed at. It loads from the **built bundle**,
-which means it also exercises the real `vectors.bin` parser and id mapping.
-
-Quality is reported as proxies, because without users there is no ground truth: pairwise
-redundancy, category spread, normalized topic entropy, freshness, and HTML coverage.
-
-## The client
-
-`mobile/` is an Expo (React Native) app — one codebase for iOS, Android, and web. See
-[mobile/README.md](mobile/README.md) for the full picture.
-
-Split so that as much as possible is verifiable without a device:
-
-- **`mobile/src/core/`** — pure TypeScript, no React Native imports. The `vectors.bin` parser
-  and the whole feed pipeline. Ported from `recsys/feed.py` and **cross-verified against it**:
-  `npm test` asserts the TypeScript feed reproduces the Python ranking exactly, on the real
-  `dist/` bundle, including score components and quality metrics.
-- **`mobile/src/platform/`** — thin device adapters (download, `fzstd`, SQLite, files).
-  Deliberately outside the test suite, because none of it can run in Node.
-- **`mobile/app/`** — Expo Router screens: the daily feed and a WebView reader.
-
-**Porting found a real bug.** `papers.vec_index` *is* a row offset into `vectors.bin`, but the
-Python `_rows()` treated it as a paper id and looked it up in the paper-id→row map — returning
-a *different paper's vector* for almost every row. It failed silently, because recency and
-topic scores stayed correct, so the similarity term was effectively noise while the feed still
-looked plausible. Both implementations are fixed and a regression test guards the invariant.
-This is the argument for cross-implementation verification in one line.
-
-Decompression was settled with measurements rather than preference: `fzstd` (zstd) and `pako`
-(gzip) both decompress the real bundle at ~60 MB/s in pure JS, but zstd is a 13% smaller
-download. `fzstd` needs no WASM, which matters because Hermes does not support it.
-
-## Quick start
+## Running it
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-docker compose up -d postgres              # Postgres 17 + pgvector on localhost:5433
-
-.venv/bin/python -m ingest init-db         # schema + migrations (idempotent)
-.venv/bin/python -m ingest crawl --per-category 100
-.venv/bin/python -m ingest embed           # needs requirements-embed.txt (torch)
-.venv/bin/python -m ingest stats
-
-.venv/bin/python -m bundle build --out dist --encoding int8
-.venv/bin/python -m bundle verify  dist    # checksums + nearest-neighbour round trip
-
-.venv/bin/python -m recsys seeds --n 24
-.venv/bin/python -m recsys feed --seeds <id> <id> --manifest
-.venv/bin/python -m reader shot <id> --device iphone14
-.venv/bin/python -m eval.quantization_recall --source db
+cd mobile
+npm install
+npm start          # Expo Go, or
+npm run typecheck  # tsc
+npm test           # architecture guard
 ```
 
-Every write is an upsert, so all commands are safe to re-run. `ingest embed --embedder hashing`
-substitutes a deterministic offline stand-in so the pipeline can be exercised without a ~2 GB
-torch install and a 440 MB model download.
+To build the APK, see [docs/release.md](docs/release.md).
 
-## Bundle artifacts
+## Background
 
-| File | Contents |
-|---|---|
-| `app_bundle.db.zst` | SQLite: `papers`, `topics`, `paper_topics`, `meta`, plus an FTS5 index over title+abstract for **offline full-text search**. zstd at ~34% of raw. |
-| `vectors.bin` | Mean-centered, quantized embeddings aligned to `papers.vec_index`. |
-| `delta/<date>.jsonl.zst` | Papers newer than a cutoff, for incremental sync. |
-| `manifest.json` | Versions, SHA-256 per file, corpus stats, and **the ranking configuration**. |
+The original design was a static bundle with on-device recommendations — precomputed
+embeddings, quantised vectors, no server. That work is real and measured: SPECTER2 turns out
+to be severely anisotropic, and mean-centering improves the pairwise-similarity spread by
+4.9×, which is what made recommendations viable at all. It is in `lab/` and
+[docs/design-notes.md](docs/design-notes.md), switched off deliberately — with a thousand
+papers from one day and no usage data, a "recommended" feed would be a guess dressed up as a
+feature.
 
-### `vectors.bin` format
-
-Fixed layout across encodings — `scales` is always present (uniformly 1.0 for binary) — so a
-client needs one parser. `read_vectors()` in [bundle/builder.py](bundle/builder.py) is the
-reference implementation and doubles as the executable spec:
-
-```
-magic           4 bytes   "DPV1"
-header_len      uint32<   length of the JSON header
-header          JSON      encoding, count, dim, code_dtype, centered, layout
-ids             int64<    [count]     maps row → papers.id
-scales          float32<  [count]     per-vector scale (1.0 for binary)
-codes           int8/uint8[count, dim]
-centroid        float32<  [dim]       subtracted before quantization
-```
-
-Approximate cosine for int8 is `(codes @ query) * scales`, using an exact float32 query.
-Because codes are centered, this yields centered cosine directly.
-
-## Design notes
-
-Two schema decisions are load-bearing:
-
-- **`papers` models the work; `paper_versions` models the arXiv submission.** A preprint and
-  its published version are one work with two versions. Without this split the feed shows the
-  same paper twice and splits the engagement signal that trains the recommender.
-- **`feed_impressions` is not optional.** Without logged impressions you cannot distinguish
-  "the user ignored this" from "the user never saw it because we ranked it 90th". The same
-  reasoning drives `events.client_event_id UNIQUE`: mobile clients batch and retry, so without
-  an idempotency key you silently double-count engagement.
-
-Gotchas discovered the hard way, each documented at its site in the code:
-
-- **An HTTP `200` from `arxiv.org/html/{id}` is not evidence of full text.** arXiv serves a
-  styled error page; detection needs the LaTeXML `ltx_page_content` marker.
-- **`adapters` 1.3.0 logs "no adapters activated" on every forward** even when the adapter is
-  active — verified by toggling `set_active_adapters` and diffing outputs. Do not "fix" it.
-- **class matching for LaTeXML must be substring-based.** `class="ltx_para ltx_noindent"` is
-  missed by an exact `class="ltx_para"` match, which silently reported 2 paragraphs for a
-  125-paragraph paper.
-
-## Being a good citizen
-
-arXiv asks for ≤1 request every 3 seconds on its query API and discourages aggressive
-crawling. The client enforces a per-host minimum interval across a small thread pool, sends
-an identifying `User-Agent`, backs off exponentially on `429`/`5xx`, and caches every
-response to disk, so re-runs do not re-hit the APIs.
-
-Only open-access content is ingested and rehosted; paywalled papers are deep-linked, never
-mirrored.
-
-## Layout
-
-```
-dailypapers/            Core package (shared by ingest, bundle, recsys, eval, reader)
-  http.py               Polite HTTP client: per-host limiting, retries, disk cache
-  arxiv.py              arXiv API client: Atom parsing, identity, date-range queries
-  openalex.py           OpenAlex enrichment via arXiv DOI
-  coverage.py           HTML full-text detection (status + LaTeXML marker)
-  embed.py              SPECTER2 embedder (+ offline hashing stand-in)
-  quantize.py           int8 / binary quantization, Hamming, top-k
-  db.py                 Connection, schema, migrations, idempotent upserts
-  config.py             Env-driven settings (stdlib .env loader)
-ingest/                 Pipeline: crawl | embed | init-db | migrate | stats
-bundle/                 Static bundle builder, reference vector reader, verifier
-recsys/                 On-device feed: candidates, scoring, MMR, exploration, eval
-reader/                 Reader spike: extractor, reflowed CSS, WebDriver measurement
-eval/                   Offline evaluation (quantization recall)
-spike/                  Phase 0 coverage analysis (stdlib only)
-mobile/                 Expo client (core logic cross-verified against recsys/)
-db/schema.sql           Base schema
-db/migrations/          Numbered, tracked in schema_migrations
-docker-compose.yml      Postgres 17 + pgvector on host port 5433
-```
+The reader came first because it is the part a person can actually judge.
