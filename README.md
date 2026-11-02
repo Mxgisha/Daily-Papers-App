@@ -14,6 +14,8 @@
 <p align="center">
   <a href="https://github.com/USER/REPO/releases/latest"><b>Download the Android APK →</b></a>
   &nbsp;·&nbsp;
+  <a href="docs/textbook.md">Textbook</a>
+  &nbsp;·&nbsp;
   <a href="docs/rebuild-guide.md">Rebuild guide</a>
   &nbsp;·&nbsp;
   <a href="docs/pixel8-test-plan.md">Test plan</a>
@@ -138,7 +140,7 @@ and supports range requests, which I checked before choosing it rather than afte
 | Path | What it is |
 |---|---|
 | `mobile/` | **The app.** Screens in `app/`, logic in `src/`, verification harness in `harness/` |
-| `docs/` | Rebuild guide, design notes, the Pixel 8 test plan, and a PDF write-up |
+| `docs/` | A textbook on the underlying problems, a rebuild guide, design notes, the Pixel 8 test plan, and a PDF write-up |
 | `dailypapers/` `ingest/` `bundle/` `recsys/` `db/` `eval/` `spike/` | The Python data pipeline behind the bundled list: crawl → enrich → embed → bundle |
 | `reader/` | The reader stylesheet and extraction spike the app's CSS is generated from |
 | `lab/` | Real, tested work that the app does not use: an on-device recommendation pipeline. Kept out of `mobile/` so its dependencies aren't compiled into the APK |
