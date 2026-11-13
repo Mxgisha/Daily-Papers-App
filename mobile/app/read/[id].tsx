@@ -36,6 +36,7 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 import { fetchArxivById } from '../../src/arxiv';
+import { fetchArticleHtml } from '../../src/articleHtml';
 import { ThemeToggle } from '../../src/components/ThemeToggle';
 import { needsRepair, useLibrary, type ReadingSpot } from '../../src/library';
 import { hasArticle, readArticle, removeArticle, saveArticle } from '../../src/offline';
@@ -101,6 +102,8 @@ export default function ReaderScreen() {
   const [findInfo, setFindInfo] = useState<{ count: number; index: number } | null>(null);
   const [offlineState, setOfflineState] = useState<OfflineState>('unknown');
   const [offlineHtml, setOfflineHtml] = useState<string | null>(null);
+  /** The article fetched and rewritten by us, so figures can be lazy. Null means use the URL. */
+  const [liveHtml, setLiveHtml] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const target = useRef<ReadingSpot | null>(null);
@@ -141,6 +144,28 @@ export default function ReaderScreen() {
       alive = false;
     };
   }, [id]);
+
+  /**
+   * Fetch and prepare the article ourselves.
+   *
+   * Loading arXiv's URL directly lets the WebView stream, but also lets the preload scanner
+   * start every figure before any script runs — and `loading="lazy"` only counts if it is in
+   * the markup at that moment. See src/articleHtml.ts.
+   *
+   * The fallback matters more than the optimisation: if the fetch fails, we load the URL and
+   * behave exactly as before.
+   */
+  useEffect(() => {
+    if (offlineHtml) return;
+    let alive = true;
+    (async () => {
+      const html = await fetchArticleHtml(id);
+      if (alive && html) setLiveHtml(html);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [id, offlineHtml]);
 
   useEffect(() => {
     if (!ready || meta) return;
@@ -277,10 +302,13 @@ export default function ReaderScreen() {
     [id, theme, initialSpot],
   );
 
-  const htmlSource = useMemo(
-    () => (offlineHtml ? { html: offlineHtml } : { uri: `${ARXIV_HTML}${id}` }),
-    [offlineHtml, id],
-  );
+  const htmlSource = useMemo(() => {
+    // Offline copy first (it is the whole point), then our prepared copy, then the bare URL
+    // as the fallback that behaves exactly as the app did before.
+    if (offlineHtml) return { html: offlineHtml };
+    if (liveHtml) return { html: liveHtml };
+    return { uri: `${ARXIV_HTML}${id}` };
+  }, [offlineHtml, liveHtml, id]);
 
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
@@ -459,7 +487,7 @@ export default function ReaderScreen() {
       {renderer === 'html' ? (
         <WebView
           ref={webviewRef}
-          key={`html-${offlineHtml ? 'off' : 'net'}-${initialSpot?.anchor ?? 'n'}-${initialSpot ? Math.round(initialSpot.fraction * 1000) : 'n'}`}
+          key={`html-${offlineHtml ? 'off' : liveHtml ? 'prep' : 'net'}-${initialSpot?.anchor ?? 'n'}-${initialSpot ? Math.round(initialSpot.fraction * 1000) : 'n'}`}
           source={htmlSource}
           injectedJavaScriptBeforeContentLoaded={injected}
           injectedJavaScript={

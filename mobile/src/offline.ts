@@ -14,6 +14,8 @@
 
 import * as FileSystem from 'expo-file-system/legacy';
 
+import { prepareArticleHtml } from './articleHtml';
+
 const DIR = `${FileSystem.documentDirectory}offline/`;
 
 /** Ids can contain a slash (math.GT/0309136), which is not a legal file name. */
@@ -32,19 +34,6 @@ export function articleUrl(id: string): string {
   return `https://arxiv.org/html/${id}`;
 }
 
-/**
- * Insert a base URL so relative asset paths keep working, and mark the copy so the reader
- * can say "offline".
- */
-function prepare(html: string, id: string): string {
-  const base = `<base href="${articleUrl(id)}/">`;
-  const marker = '<!-- saved for offline reading -->';
-  if (/<head[^>]*>/i.test(html)) {
-    return marker + html.replace(/<head([^>]*)>/i, `<head$1>${base}`);
-  }
-  return marker + base + html;
-}
-
 export interface SaveResult {
   ok: boolean;
   bytes: number;
@@ -57,7 +46,8 @@ export async function saveArticle(id: string): Promise<SaveResult> {
     if (!response.ok) {
       return { ok: false, bytes: 0, error: `arXiv returned ${response.status}` };
     }
-    const html = prepare(await response.text(), id);
+    // Saved through the same preparation as the live path, so an offline copy is lazy too.
+    const html = prepareArticleHtml(await response.text(), id);
     await ensureDir();
     await FileSystem.writeAsStringAsync(DIR + fileName(id), html, {
       encoding: FileSystem.EncodingType.UTF8,

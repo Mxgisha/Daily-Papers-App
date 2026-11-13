@@ -1,7 +1,7 @@
 {
-  "base": "http://127.0.0.1:32983",
+  "base": "http://127.0.0.1:44985",
   "proxy": "http://127.0.0.1:8765",
-  "list": "{\"bodyText\":\"\u2630\\nPapers\\nLight\\n1000 papers \u00b7 built 2026-10-14\\nAll\\nML / AI 875\\nCS 902\\nMath 14\\nPhysics 15\\nBiology 6\\nStatistics 45\\nSignals 17\\nEconomics 1\\nPAPER OF THE DAY \u00b7 129 UPVOTES ON HF\\nSpatialScout: Can VLM Agents Actively Explore and Map 3D Scenes?\\nSpatial intelligence requires agents to actively acquire visual evidence and integrate observations into a coherent representation of the three-dimensional world. \",\"cards\":58,\"inputs\":1}",
+  "list": "{\"bodyText\":\"\u2630\\nPapers\\nLight\\n1000 papers \u00b7 built 2026-10-14\\nAll\\nML / AI 875\\nCS 902\\nMath 14\\nPhysics 15\\nBiology 6\\nStatistics 45\\nSignals 17\\nEconomics 1\\nPAPER OF THE DAY \u00b7 71 UPVOTES ON HF\\nSO-Arena: Benchmarking the Capability Spectrum and Reliability of System One Models\\nSystem One models promise fast, general-purpose decision-making without lengthy token generation. However, understanding their capability spectru\",\"cards\":58,\"inputs\":1}",
   "theme": {
     "label_before": "Light",
     "label_clicked": "Light",
@@ -16,7 +16,7 @@
     "screenshot": "../reports/reader-mvp/04-saved.png"
   },
   "reader": {
-    "url": "http://127.0.0.1:32983/read/2610.13948",
+    "url": "http://127.0.0.1:44985/read/2610.13948",
     "iframe_src": "http://127.0.0.1:8765/read/2610.13948?theme=dark",
     "used_proxy": true,
     "pdf_fallback_shown": false,

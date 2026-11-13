@@ -261,6 +261,27 @@ export function buildReaderScript({
 
       applyCss();
       window.__dpTheme(theme);
+
+      // Internal cross-references.
+      //
+      // The app usually renders a copy of the article with a <base> element pointing at
+      // arXiv, so relative figure URLs resolve. The side effect is that a link to "#S1.F1"
+      // no longer resolves to the document itself -- it resolves to an absolute arxiv.org
+      // URL, and clicking it would navigate away from the article instead of jumping inside
+      // it. Papers cross-reference figures and sections constantly, so handle fragments here.
+      if (!window.__dpFragments) {
+        window.__dpFragments = true;
+        document.addEventListener('click', function (e) {
+          var a = e.target && e.target.closest ? e.target.closest('a[href^="#"]') : null;
+          if (!a) return;
+          var href = a.getAttribute('href');
+          if (!href || href.length < 2) return;
+          var target = document.getElementById(href.slice(1));
+          if (!target) return;
+          e.preventDefault();
+          target.scrollIntoView({ block: 'start' });
+        }, true);
+      }
       document.addEventListener('DOMContentLoaded', function () {
         applyCss();
         window.__dpTheme(theme);
