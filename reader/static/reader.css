@@ -367,3 +367,19 @@ a[href^="http"] { word-break: break-all; }
  * disturb the baseline, and page overflow is already impossible. */
 math[display="block"] { display: block; max-width: 100%; overflow-x: auto; overflow-y: hidden; }
 .ltx_math_display { max-width: 100%; overflow-x: auto; }
+
+/* ==========================================================================
+ * The toolbar is hidden when this page is embedded by the app.
+ *
+ * The spike page carries its own A− / A+ / theme controls. Rendered inside the app,
+ * which already has a header, that produced two stacked bars. The app supplies the
+ * theme and text size itself, so this bar is redundant there.
+ *
+ * The standalone harness (mobile/harness/check_restore.py) loads this page directly
+ * and loses its controls as a result — fine, it only measures geometry.
+ * ========================================================================== */
+
+#__bar { display: none !important; }
+
+/* Reclaim the space the bar used to reserve. */
+body { padding-top: 0.75rem; }
