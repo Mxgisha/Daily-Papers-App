@@ -71,15 +71,6 @@ export async function readArticle(id: string): Promise<string | null> {
   }
 }
 
-export async function hasArticle(id: string): Promise<boolean> {
-  try {
-    const info = await FileSystem.getInfoAsync(DIR + fileName(id));
-    return info.exists;
-  } catch {
-    return false;
-  }
-}
-
 export async function removeArticle(id: string): Promise<void> {
   try {
     await FileSystem.deleteAsync(DIR + fileName(id), { idempotent: true });

@@ -20,7 +20,7 @@
   &nbsp;·&nbsp;
   <a href="docs/pixel8-test-plan.md">Test plan</a>
   &nbsp;·&nbsp;
-  <a href="docs/design-notes.md">Design notes</a>
+  <a href="docs/findings.md">Findings</a>
 </p>
 
 ---
@@ -140,13 +140,12 @@ and supports range requests, which I checked before choosing it rather than afte
 | Path | What it is |
 |---|---|
 | `mobile/` | **The app.** Screens in `app/`, logic in `src/`, verification harness in `harness/` |
-| `docs/` | A textbook on the underlying problems, a rebuild guide, design notes, the Pixel 8 test plan, and a PDF write-up |
-| `dailypapers/` `ingest/` `bundle/` `recsys/` `db/` `eval/` `spike/` | The Python data pipeline behind the bundled list: crawl → enrich → embed → bundle |
-| `reader/` | The reader stylesheet and extraction spike the app's CSS is generated from |
-| `lab/` | Real, tested work that the app does not use: an on-device recommendation pipeline. Kept out of `mobile/` so its dependencies aren't compiled into the APK |
+| `docs/` | A textbook on the underlying problems, a rebuild guide, findings, the Pixel 8 test plan, and a PDF write-up |
+| `dailypapers/` `ingest/` `db/` | The data pipeline behind the bundled list: crawl → enrich → embed → Postgres |
+| `reader/` | The extraction server and stylesheet the app's reader CSS is generated from, and the article proxy the web build uses |
 
-`mobile/tests/architecture.test.ts` enforces that boundary: it fails if a screen imports
-off-path machinery, or if a relative import stops resolving.
+`mobile/tests/architecture.test.ts` guards the app's imports: it fails if a relative import
+stops resolving. The pipeline directories are Python and are not reachable from the app at all.
 
 ## Running it
 
@@ -162,12 +161,13 @@ To build the APK, see [docs/release.md](docs/release.md).
 
 ## Background
 
-The original design was a static bundle with on-device recommendations — precomputed
-embeddings, quantised vectors, no server. That work is real and measured: SPECTER2 turns out
-to be severely anisotropic, and mean-centering improves the pairwise-similarity spread by
-4.9×, which is what made recommendations viable at all. It is in `lab/` and
-[docs/design-notes.md](docs/design-notes.md), switched off deliberately — with a thousand
-papers from one day and no usage data, a "recommended" feed would be a guess dressed up as a
-feature.
+The first design was a static bundle with on-device recommendations — precomputed embeddings,
+quantised vectors, no server. It was built and measured, and then dropped: with a thousand
+papers from a single day and no usage data, a "recommended" feed would be a guess dressed up as
+a feature. The measurements that came out of it are in [docs/findings.md](docs/findings.md) —
+SPECTER2 turns out to be severely anisotropic, and mean-centering improves the
+pairwise-similarity spread by 4.9×, which is the finding that made recommendations viable at
+all if it is ever picked back up.
 
-The reader came first because it is the part a person can actually judge.
+That code has since been removed from the tree; it is in the git history. The reader came
+first because it is the part a person can actually judge.

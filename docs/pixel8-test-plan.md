@@ -9,7 +9,7 @@ Prepared against `c854b3c` plus the changes in this commit.
 ### The codebase is now app-only
 
 `mobile/` contains only what ships. The static-bundle loader and the on-device
-recommendation pipeline moved to `lab/` at the repo root, with their tests and harness.
+recommendation pipeline were removed; their findings are recorded in `docs/findings.md`.
 They were never reachable from a screen and never in the bundle, but they carried four
 dependencies, and `expo-sqlite` alone is 76 MB on disk and a native module in the APK.
 

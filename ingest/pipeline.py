@@ -21,7 +21,7 @@ from dailypapers import arxiv, coverage, openalex
 from dailypapers.db import fetch_papers_to_embed, save_embeddings, save_paper
 from dailypapers.embed import paper_text
 from dailypapers.http import PoliteClient
-from dailypapers.quantize import l2_normalize
+from dailypapers.vectors import l2_normalize
 
 COMMIT_EVERY = 25
 

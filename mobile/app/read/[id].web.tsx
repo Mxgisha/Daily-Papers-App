@@ -15,9 +15,9 @@
  * exposes a HEAD probe so this screen can tell the difference.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { CSSProperties } from 'react';
-import { useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 
 import { useTheme } from '../../src/theme';
 
@@ -68,14 +68,17 @@ export default function ReaderWeb() {
     };
   }, [id]);
 
-  if (status === 'probing') {
-    return <div style={{ ...shell, color: '#8b9199' }}>Loading {id}…</div>;
-  }
+  // One return, so the header is configured once. `headerLeft: undefined` drops the drawer
+  // control the stack sets by default and restores the back button — the native reader does
+  // the same, and this is a pushed screen with somewhere to go back to.
+  let body: ReactNode;
 
-  if (status === 'unavailable') {
+  if (status === 'probing') {
+    body = <div style={{ ...shell, color: '#8b9199' }}>Loading {id}…</div>;
+  } else if (status === 'unavailable') {
     // Browsers render PDFs natively, so web embeds the file directly and needs no PDF.js.
     // Native has no such luxury, which is why src/pdfViewer.ts exists.
-    return (
+    body = (
       <div style={{ ...shell, padding: 0, gap: 0 }}>
         <div
           style={{
@@ -94,16 +97,23 @@ export default function ReaderWeb() {
         />
       </div>
     );
+  } else {
+    body = (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, backgroundColor: '#16181c' }}>
+        <iframe
+          src={src}
+          title={`arXiv ${id}`}
+          // No sandbox: the restyled article needs to load cross-origin figures from arXiv.
+          style={{ flex: 1, width: '100%', border: 0, backgroundColor: '#16181c' }}
+        />
+      </div>
+    );
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, backgroundColor: '#16181c' }}>
-      <iframe
-        src={src}
-        title={`arXiv ${id}`}
-        // No sandbox: the restyled article needs to load cross-origin figures from arXiv.
-        style={{ flex: 1, width: '100%', border: 0, backgroundColor: '#16181c' }}
-      />
-    </div>
+    <>
+      <Stack.Screen options={{ title: 'Reading', headerLeft: undefined }} />
+      {body}
+    </>
   );
 }

@@ -39,7 +39,7 @@ import { fetchArxivById } from '../../src/arxiv';
 import { fetchArticleHtml } from '../../src/articleHtml';
 import { ThemeToggle } from '../../src/components/ThemeToggle';
 import { needsRepair, useLibrary, type ReadingSpot } from '../../src/library';
-import { hasArticle, readArticle, removeArticle, saveArticle } from '../../src/offline';
+import { readArticle, removeArticle, saveArticle } from '../../src/offline';
 import { pdfViewerHtml } from '../../src/pdfViewer';
 import { READER_CSS } from '../../src/platform/readerCss.generated';
 import {
